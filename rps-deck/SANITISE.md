@@ -61,6 +61,16 @@ the map each time is how identifiers get missed.
 Applies the map longest-key-first, then scans the output for every mapped identifier
 case-insensitively plus the generic classes. Non-zero exit means something survived.
 
+## Two things the scan will catch you on
+
+**The scan is case-insensitive, so provenance lines fail it.** A `source:
+CLOUDEATS_PLAN.md` line in the sanitised file's frontmatter is a residual like any other.
+Describe the source generically instead — *"dokumentasi frontend admin produksi"*.
+
+**Token prefixes derived from the employer are identifiers too.** A CSS variable named
+`ce-primary` carries the company as surely as the company name does. Sweep for
+abbreviations and initialisms, not only full names.
+
 ## The part the tool cannot check
 
 Renaming does not hide **structure**. Anyone who knows the system will recognise its service

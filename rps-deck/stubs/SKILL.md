@@ -20,6 +20,10 @@ scan** — and respect the ADRs in `docs/adr/`.
 
 `node ~/.agent-tools/rps-deck/deck.mjs --help` lists the commands.
 
+**Read the course's own `CONTEXT.md` first** (e.g. `02-Projects/Cakrawala/CONTEXT.md`). The
+toolkit is course-agnostic on purpose; per-course facts — real slot lengths, how weeks map
+to sessions, the sanitisation names in use — live there, not here.
+
 ## The six steps
 
 Each ends on a checkable criterion. Do not move on before it holds.
@@ -45,6 +49,10 @@ The RPS contract wins by default. Where it is **impossible** — an instruction 
 carried out in the real slot — the deck states the workable version and the deviation is
 appended to `<course>/RPS Defects.md`. Where it is **silent** on a fact a slide needs, ask;
 do not infer.
+
+Watch for the **reverse** gap too: where the RPS mandates materi the week note omits, add
+it to the deck, log the omission in the register, and name in the Aksi where any deferred
+remainder lands (typically the next session's opener).
 
 *Done when:* every conflict has a ruling and any deviation is in the register.
 

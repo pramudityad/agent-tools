@@ -95,6 +95,27 @@ The cost of mid-segment markers is a false positive if prose genuinely contains 
 six words followed by a space. None occur in Indonesian teaching prose, but if you hit one,
 brace the real marker or rephrase.
 
+## Gotchas that fail `check`
+
+Each of these has cost a real authoring session.
+
+- **Every field on its own line.** Bullets that look like content under `**VISUAL**` but
+  belong under `**KONTEN**` make VISUAL swallow them, and KONTEN goes missing — reported as
+  *"slide N has no **KONTEN**"*. `VISUAL` is a directive phrase; `KONTEN` is what the room
+  reads.
+- **No bold line-starts inside KONTEN.** A line beginning `**Something**` parses as a field
+  and fails as unknown. Drafting debris — stray `**NOTES-AUX**`, duplicated `**NOTES**` —
+  fails the same way. Before running `check`, scan for `^\*\*` lines that are not real
+  fields. Mixed-case bold *inside* a sentence is safe; only line-starts trip it.
+- **The stamp is `slot-start + min`, with no off-by-one.** For `slot-start: "18:15"`,
+  minute 1 is `18:16`, not `18:15`. Let `restamp` do it and the question never arises.
+- **Write the file with a heredoc.** Content carrying literal `\n` escapes (JSON-encoded
+  strings pasted through a write tool) lands as backslash-n rather than newlines, and
+  `check` reports *0 slides* while `grep "### SLIDE"` shows many. Symptom and cause look
+  unrelated.
+- **Use absolute paths.** A shell's working directory persists between calls; relative
+  paths in a later write resolve somewhere you did not intend.
+
 A line-leading ALL-CAPS word that is not in the table above fails the parse. That is
 deliberate — the alternative is a typo rendering as literal text on a classroom screen. If
 the prose genuinely starts with an acronym and a colon, lowercase it or rephrase.

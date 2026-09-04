@@ -1056,19 +1056,21 @@ const cmdBuild = ({ args, flags }) => {
   }
   const open = spec.slides.filter((s) => s.flag);
 
-  // --final is the day-you-teach gate: reviewed, approved, nothing unresolved.
+  // --final is the day-you-teach gate: nothing unresolved, then reviewed and approved.
+  // Content first, because approving a deck that still has an open FLAG just costs a
+  // second round trip.
   if (flags.has('final')) {
+    if (open.length) {
+      console.error(`✗ ${open.length} open FLAG blocks release:`);
+      reportErrors(open.map((s) => ({ line: s.line, message: `slide ${s.n} — ${s.flag}` })));
+      return 1;
+    }
     const approval = approvalState(text);
     if (approval.state !== 'approved') {
       console.error(`✗ ${basename(path)} — ${approval.message}`);
       return 1;
     }
     console.log(`  ✓ ${approval.message}`);
-    if (open.length) {
-      console.error(`✗ ${open.length} open FLAG blocks release:`);
-      reportErrors(open.map((s) => ({ line: s.line, message: `slide ${s.n} — ${s.flag}` })));
-      return 1;
-    }
   } else if (open.length) {
     // Previewing with a placeholder is legitimate; teaching from one is not.
     console.log(`⚠ ${open.length} open FLAG:`);

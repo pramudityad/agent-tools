@@ -26,12 +26,14 @@ function run(args, cwd) {
 import { parseSpec, validate, renderHtml, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap } from './deck.mjs';
 
 let passed = 0;
+const failed = [];
 function test(name, fn) {
   try {
     fn();
     passed += 1;
     console.log(`  ✓ ${name}`);
   } catch (err) {
+    failed.push(name);
     console.error(`  ✗ ${name}\n    ${err.message}`);
     process.exitCode = 1;
   }
@@ -611,4 +613,11 @@ test('extract with no selector returns the document unchanged', () => {
   assert.equal(extract(DOC, {}), DOC);
 });
 
-console.log(`\n${passed} passed`);
+if (failed.length) {
+  // The summary has to be unmissable: a bare pass count printed alongside failures once
+  // let a red suite be reported as green.
+  console.error(`\n✗ ${failed.length} FAILED, ${passed} passed`);
+  for (const name of failed) console.error(`    ✗ ${name}`);
+} else {
+  console.log(`\n✓ ${passed} passed`);
+}
