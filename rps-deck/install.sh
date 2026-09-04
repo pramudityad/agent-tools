@@ -16,7 +16,9 @@ install_skill() {
 
 append_agents_md() {
   local file="$1" label="$2"
-  [ -f "$file" ] || { echo "• $label not present — skipped"; return; }
+  # The agent directory existing is the signal; its AGENTS.md may not exist yet.
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
   if grep -qF "$MARKER" "$file"; then
     echo "• $label already references the toolkit — left unchanged"
     return
@@ -29,5 +31,9 @@ append_agents_md() {
 node "$ROOT/test.mjs" > /dev/null || { echo "✗ tests fail — refusing to install"; exit 1; }
 echo "✓ tests pass"
 
-install_skill "$HOME/.claude/skills" "Claude Code"
-append_agents_md "$HOME/.claude/AGENTS.md" "Claude AGENTS.md"
+[ -d "$HOME/.claude" ]     && install_skill    "$HOME/.claude/skills"    "claude code"
+[ -d "$HOME/.pi/agent" ]  && install_skill    "$HOME/.pi/agent/skills" "pi"
+[ -d "$HOME/.claude" ]    && append_agents_md "$HOME/.claude/AGENTS.md" "claude AGENTS.md"
+[ -d "$HOME/.codex" ]     && append_agents_md "$HOME/.codex/AGENTS.md"  "codex"
+[ -d "$HOME/.hermes" ]    && append_agents_md "$HOME/.hermes/AGENTS.md" "hermes"
+exit 0

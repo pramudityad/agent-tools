@@ -5,6 +5,10 @@
 // The spec `.md` is the single source of truth (ADR 0001): everything rendered is
 // derived from it, never retyped alongside it.
 
+import { readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+
 // ── spec grammar ──────────────────────────────────────────────────────────────
 
 const SLIDE_RE = /^###\s+SLIDE\s+(\d+)\s+·\s+(.+?)\s*$/;
@@ -62,6 +66,7 @@ export function parseSpec(text) {
         notes: '',
         hold: false,
         unit: '',
+        dur: null,
         flag: '',
         min: null,
         clock: '',
@@ -92,6 +97,15 @@ export function parseSpec(text) {
   closeField();
 
   for (const each of slides) {
+    if (typeof each.dur === 'string') {
+      const minutes = Number(each.dur.trim());
+      if (!Number.isInteger(minutes) || minutes < 0) {
+        errors.push({ line: each.line, slide: each.n, message: `slide ${each.n} has DUR "${each.dur}" — expected whole minutes` });
+        each.dur = null;
+      } else {
+        each.dur = minutes;
+      }
+    }
     for (const required of REQUIRED_FIELDS) {
       if (!each[required.key]) {
         errors.push({
@@ -146,6 +160,7 @@ const FIELD_KEYS = {
   'KONTEN-MAHASISWA': 'kontenMahasiswa',
   NOTES: 'notes',
   UNIT: 'unit',
+  DUR: 'dur',
   FLAG: 'flag',
   HOLD: 'hold',
 };
@@ -198,6 +213,22 @@ export function validate(spec) {
       slide: 0,
       message: `last slide sits at min ${previous}, past the ${slotMinutes}-minute slot`,
     });
+  }
+
+  const timed = slides.filter((s) => s.dur !== null);
+  if (timed.length) {
+    if (timed.length !== slides.length) {
+      errors.push({ line: 0, slide: 0, message: `${slides.length - timed.length} slide(s) have no DUR — either all slides declare one or none do` });
+    }
+    const total = timed.reduce((sum, s) => sum + s.dur, 0);
+    if (slotMinutes && total !== slotMinutes) {
+      const gap = slotMinutes - total;
+      errors.push({
+        line: 0,
+        slide: 0,
+        message: `Σ DUR is ${total} min, slot is ${slotMinutes} — ${gap > 0 ? `${gap} short` : `${-gap} over`}`,
+      });
+    }
   }
 
   // A logistics-only deck (exam or presentation session) has no teaching content to
@@ -363,7 +394,10 @@ export function renderKonten(konten) {
   return out.join('');
 }
 
-// ── page ──────────────────────────────────────────────────────────────────────
+// ── page ─────────────────────────────────────────────────────────────────────
+//
+// A projectable deck, not a review page: review happens on naskah.md and materi.md, so
+// the HTML is the thing that goes on the projector (ADR 0006).
 
 const CSS = `
 *,*::before,*::after{box-sizing:border-box}
@@ -399,91 +433,120 @@ const CSS = `
   --note:#8FA0E8; --note-soft:#1B2138;
   --bad:#E08585; --good:#6FC28E;
 }
+html,body{height:100%}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
-  font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
-.wrap{max-width:940px;margin:0 auto;padding:0 24px 96px}
-header.top{padding:56px 0 32px;border-bottom:2px solid var(--ink)}
-.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--accent);margin:0 0 14px}
-h1{font-family:var(--serif);font-size:clamp(30px,5vw,46px);line-height:1.12;margin:0 0 10px;
-  font-weight:600;text-wrap:balance;letter-spacing:-.01em}
-.sub{color:var(--ink-2);margin:0 0 26px;max-width:62ch}
-.facts{display:flex;flex-wrap:wrap;gap:0;border-top:1px solid var(--rule)}
-.fact{flex:1 1 130px;padding:14px 18px 14px 0;border-right:1px solid var(--rule)}
-.fact:last-child{border-right:0}
-.fact .k{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-  color:var(--ink-3);display:block;margin-bottom:4px}
-.fact .v{font-family:var(--serif);font-size:20px;font-variant-numeric:tabular-nums}
-.badge{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
-  letter-spacing:.1em;text-transform:uppercase;padding:6px 11px;border-radius:2px;margin-bottom:16px}
-.badge.ins{background:var(--note-soft);color:var(--note);box-shadow:inset 0 0 0 1px currentColor}
-.badge.stu{background:var(--accent-soft);color:var(--accent);box-shadow:inset 0 0 0 1px currentColor}
-.callout{margin:26px 0 0;padding:16px 18px;border-left:3px solid var(--flag);
-  background:var(--flag-soft);color:var(--ink);font-size:14.5px;border-radius:0 3px 3px 0}
-.callout b{color:var(--flag)}
-.unit{display:flex;align-items:baseline;gap:14px;margin:56px 0 0;padding-bottom:10px;
-  border-bottom:1px solid var(--rule-2)}
-.unit .u{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.08em}
-.unit .n{font-family:var(--serif);font-size:20px;font-weight:600}
-.unit .m{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
-  font-variant-numeric:tabular-nums;white-space:nowrap}
-.slide{display:grid;grid-template-columns:74px 1fr;gap:20px;margin-top:22px}
-.rail{font-family:var(--mono);font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;
-  padding-top:16px;text-align:right;line-height:1.5}
-.rail .num{display:block;font-size:19px;color:var(--ink);font-weight:600}
-.rail .clk{display:block;color:var(--accent)}
-.card{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:20px 24px 22px}
-.card h2{font-family:var(--serif);font-size:22px;font-weight:600;margin:0 0 4px;line-height:1.25;
+  font-size:clamp(16px,1.35vw,22px);line-height:1.5;-webkit-font-smoothing:antialiased;
+  overflow:hidden}
+.deck{position:fixed;inset:0}
+.slide{position:absolute;inset:0;display:none;padding:clamp(28px,5vh,72px) clamp(24px,6vw,96px)
+  calc(clamp(28px,5vh,72px) + 44px);overflow-y:auto}
+.slide.live{display:flex;flex-direction:column;justify-content:center}
+body.pane-on .slide{padding-bottom:calc(38vh + 44px)}
+.inner{width:100%;max-width:1060px;margin:0 auto}
+.eyebrow{font-family:var(--mono);font-size:.6em;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 .8em}
+h1{font-family:var(--serif);font-size:2.1em;line-height:1.1;margin:0 0 .3em;font-weight:600;
+  text-wrap:balance;letter-spacing:-.01em}
+h2{font-family:var(--serif);font-size:1.55em;line-height:1.15;margin:0 0 .55em;font-weight:600;
   text-wrap:balance}
-.tags{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
-.tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
-  padding:3px 7px;border-radius:2px;background:var(--surface-2);color:var(--ink-2)}
+.tags{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 1em}
+.tag{font-family:var(--mono);font-size:.5em;letter-spacing:.1em;text-transform:uppercase;
+  padding:4px 9px;border-radius:2px;background:var(--surface-2);color:var(--ink-2)}
 .tag.hold{background:var(--accent-soft);color:var(--accent)}
 .tag.flag{background:var(--flag-soft);color:var(--flag)}
-.card p{margin:0 0 10px}
-.card ul,.card ol{margin:0 0 10px;padding-left:20px}
-.card li{margin-bottom:7px}
-.card li:last-child{margin-bottom:0}
-.lead{font-family:var(--serif);font-size:19px;line-height:1.35;color:var(--ink)}
-.fine{font-size:13.5px;color:var(--ink-2)}
+.tag.time{background:var(--note-soft);color:var(--note);font-variant-numeric:tabular-nums}
+p{margin:0 0 .7em}
+ul,ol{margin:0 0 .7em;padding-left:1.3em}
+li{margin-bottom:.42em}
+li:last-child{margin-bottom:0}
+.lead{font-family:var(--serif);font-size:1.5em;line-height:1.25}
+.fine{font-size:.8em;color:var(--ink-2)}
 .hi{color:var(--accent);font-weight:600}
 .struck li{text-decoration:line-through;color:var(--ink-3)}
-code{font-family:var(--mono);font-size:.87em;background:var(--surface-2);padding:1px 5px;border-radius:2px}
-.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:12px 0}
-.panel{display:flex;flex-direction:column;gap:5px;padding:14px 16px;background:var(--surface-2);
-  border-radius:3px;border-left:2px solid var(--rule-2)}
-.plabel{font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3)}
-.pnum{font-family:var(--serif);font-size:26px;font-variant-numeric:tabular-nums;line-height:1.1}
-.tw{overflow-x:auto;margin:12px 0}
-table{border-collapse:collapse;width:100%;font-size:14px}
-th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
-th{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:.1em .4em;
+  border-radius:3px}
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:.9em 0}
+.panel{display:flex;flex-direction:column;gap:8px;padding:20px 22px;background:var(--surface);
+  border-radius:5px;border-left:3px solid var(--rule-2)}
+.panel.bad{border-left-color:var(--bad)} .panel.bad .plabel{color:var(--bad)}
+.panel.good{border-left-color:var(--good)} .panel.good .plabel{color:var(--good)}
+.plabel{font-family:var(--mono);font-size:.55em;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3)}
+.pnum{font-family:var(--serif);font-size:1.9em;font-variant-numeric:tabular-nums;line-height:1.05}
+.tw{overflow-x:auto;margin:.9em 0}
+table{border-collapse:collapse;width:100%;font-size:.82em}
+th,td{text-align:left;padding:.6em .8em;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--mono);font-size:.72em;letter-spacing:.09em;text-transform:uppercase;
   color:var(--ink-3);border-bottom:1px solid var(--rule-2);white-space:nowrap}
 tr.mark td{background:var(--accent-soft)}
-.veil{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+.veil{display:inline-block;font-family:var(--mono);font-size:.62em;letter-spacing:.1em;
   text-transform:uppercase;color:var(--ink-3);background:repeating-linear-gradient(-45deg,
-  var(--surface-2),var(--surface-2) 4px,var(--rule) 4px,var(--rule) 5px);padding:3px 9px;border-radius:2px}
-.todo{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:var(--flag);
-  background:var(--flag-soft);padding:2px 8px;border-radius:2px;font-weight:600}
-.visual,.notes{margin-top:14px;padding-top:12px;border-top:1px dashed var(--rule)}
-.vlabel{font-family:var(--mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;
-  color:var(--ink-3);display:block;margin-bottom:5px}
-.visual p{font-size:13.5px;color:var(--ink-2);margin:0}
-.notes{border-top:1px solid var(--note);background:var(--note-soft);margin:14px -24px -22px;
-  padding:12px 24px 16px;border-radius:0 0 3px 3px}
-.notes .vlabel{color:var(--note)}
-.notes p{font-size:14px;color:var(--ink);margin:0}
-footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--rule);font-size:13.5px;color:var(--ink-2)}
-footer p{margin:0 0 8px}
-a{color:var(--accent)}
-a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-@media (max-width:620px){
-  .slide{grid-template-columns:1fr;gap:6px}
-  .rail{text-align:left;padding-top:0;display:flex;gap:10px;align-items:baseline}
-  .rail .num{font-size:15px}
-  .notes{margin-left:-24px;margin-right:-24px}
-}
+  var(--surface-2),var(--surface-2) 5px,var(--rule) 5px,var(--rule) 6px);padding:.25em .7em;
+  border-radius:3px}
+.todo{font-family:var(--mono);font-size:.68em;letter-spacing:.08em;color:var(--flag);
+  background:var(--flag-soft);padding:.15em .6em;border-radius:3px;font-weight:600}
+.hud{position:fixed;left:0;right:0;bottom:0;height:44px;display:flex;align-items:center;
+  gap:14px;padding:0 18px;background:var(--surface);border-top:1px solid var(--rule);
+  font-family:var(--mono);font-size:12px;color:var(--ink-2);z-index:3}
+.hud .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hud .grow{margin-left:auto;display:flex;align-items:center;gap:10px}
+.hud button{font:inherit;color:inherit;background:var(--surface-2);border:1px solid var(--rule);
+  border-radius:3px;padding:3px 10px;cursor:pointer}
+.hud button:hover{border-color:var(--accent);color:var(--accent)}
+.hud button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#count{font-variant-numeric:tabular-nums}
+.bar{position:fixed;left:0;top:0;height:3px;background:var(--accent);width:0;z-index:4;
+  transition:width .18s ease}
+#pane{position:fixed;left:0;right:0;bottom:44px;max-height:38vh;overflow-y:auto;
+  background:var(--note-soft);border-top:2px solid var(--note);padding:16px 22px;
+  display:none;z-index:2}
+body.pane-on #pane{display:block}
+#pane .plabel{color:var(--note);display:block;margin-bottom:6px}
+#pane .body{font-size:.82em;line-height:1.5}
+#pane .vis{font-size:.75em;color:var(--ink-2);margin-bottom:.7em;padding-bottom:.6em;
+  border-bottom:1px dashed var(--rule-2)}
+.notes,.visual{display:none}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media print{body{overflow:visible}.slide{position:static;display:block;page-break-after:always;
+  min-height:auto}.hud,#pane,.bar{display:none}}
+`;
+
+const NAV = `
+(function(){
+  var slides=[].slice.call(document.querySelectorAll('.slide'));
+  var pane=document.getElementById('pane');
+  var count=document.getElementById('count');
+  var bar=document.getElementById('bar');
+  var i=0;
+  function show(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach(function(s,x){s.classList.toggle('live',x===i);});
+    count.textContent=(i+1)+' / '+slides.length;
+    bar.style.width=((i+1)/slides.length*100)+'%';
+    if(pane){
+      var src=slides[i].querySelector('.notes');
+      var vis=slides[i].querySelector('.visual');
+      pane.innerHTML='<span class="plabel">Catatan pengampu — slide '+(i+1)+'</span>'+
+        (vis?'<div class="vis">'+vis.innerHTML+'</div>':'')+
+        '<div class="body">'+(src?src.innerHTML:'<i>tidak ada catatan</i>')+'</div>';
+    }
+    if(location.hash!=='#s'+(i+1))history.replaceState(null,'','#s'+(i+1));
+  }
+  document.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ')  {show(i+1);e.preventDefault();}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp')             {show(i-1);e.preventDefault();}
+    else if(e.key==='Home')                                    {show(0);e.preventDefault();}
+    else if(e.key==='End')                                     {show(slides.length-1);e.preventDefault();}
+    else if(e.key==='n'||e.key==='N'){document.body.classList.toggle('pane-on');}
+  });
+  var prev=document.getElementById('prev'),next=document.getElementById('next'),
+      toggle=document.getElementById('notes-toggle');
+  if(prev)prev.addEventListener('click',function(){show(i-1);});
+  if(next)next.addEventListener('click',function(){show(i+1);});
+  if(toggle)toggle.addEventListener('click',function(){document.body.classList.toggle('pane-on');});
+  var start=parseInt((location.hash||'').replace('#s',''),10);
+  show(isNaN(start)?0:start-1);
+})();
 `;
 
 /**
@@ -494,58 +557,48 @@ a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 export function renderHtml(spec, { audience }) {
   const naskah = audience === 'naskah';
   const fm = spec.frontmatter;
-  const flags = spec.slides.filter((s) => s.flag);
+  const title = naskah ? fm['title-naskah'] ?? 'Naskah Pengampu' : fm['title-materi'] ?? 'Materi Kuliah';
   const out = [];
 
-  out.push(`<title>${escapeHtml(naskah ? fm['title-naskah'] ?? 'Naskah Pengampu' : fm['title-materi'] ?? 'Materi Kuliah')}</title>`);
+  out.push(`<title>${escapeHtml(title)}</title>`);
   out.push(`<style>${CSS}</style>`);
-  out.push('<div class="wrap">', '<header class="top">');
-  out.push(naskah
-    ? '<span class="badge ins">Naskah pengampu · jangan dibagikan</span>'
-    : '<span class="badge stu">Pratinjau materi kuliah</span>');
-  if (fm.eyebrow) out.push(`<p class="eyebrow">${escapeHtml(fm.eyebrow)}</p>`);
-  out.push(`<h1>${inline(fm.topic ?? fm.course ?? '')}</h1>`);
-  if (fm.sub) out.push(`<p class="sub">${inline(fm.sub)}</p>`);
-  out.push('<div class="facts">');
-  for (const [key, value] of [
-    ['Sesi', fm.session], ['Slot', `${fm['slot-start']}–${clockAt(fm['slot-start'], fm['slot-minutes'])}`],
-    ['Durasi', `${fm['slot-minutes']} menit`], ['Slide', spec.slides.length], ['Artefak', fm.artifact],
-  ]) {
-    if (value === undefined || value === null || value === '') continue;
-    out.push(`<div class="fact"><span class="k">${escapeHtml(key)}</span><span class="v">${escapeHtml(String(value))}</span></div>`);
-  }
-  out.push('</div>');
-  if (naskah && flags.length) {
-    out.push(`<div class="callout"><b>Belum siap render.</b> ${flags.length} FLAG terbuka: ${
-      flags.map((s) => `slide ${s.n} — ${escapeHtml(s.flag)}`).join('; ')}.</div>`);
-  }
-  out.push('</header>');
+  out.push('<div class="bar" id="bar"></div>');
+  out.push('<div class="deck">');
 
-  for (const slide of spec.slides) {
-    if (slide.unit) {
-      const [code, ...name] = slide.unit.split('·');
-      out.push(`<section class="unit"><span class="u">${escapeHtml(code.trim())}</span>` +
-        `<span class="n">${escapeHtml(name.join('·').trim())}</span>` +
-        (naskah && slide.clock ? `<span class="m">menit ${slide.min} · ${slide.clock}</span>` : '') +
-        '</section>');
-    }
-    let rail = `<span class="num">${String(slide.n).padStart(2, '0')}</span>`;
-    if (naskah && slide.clock) {
-      rail += `<span>m${String(slide.min).padStart(3, '0')}</span><span class="clk">${slide.clock}</span>`;
-    }
+  spec.slides.forEach((slide, index) => {
+    const unit = slide.unit ? `<p class="eyebrow">${escapeHtml(slide.unit)}</p>` : '';
     let tags = '';
+    if (naskah && slide.clock) {
+      tags += `<span class="tag time">min ${String(slide.min).padStart(3, '0')} · ${slide.clock}` +
+        `${slide.dur === null ? '' : ` · ${slide.dur}m`}</span>`;
+    }
     if (slide.hold) tags += '<span class="tag hold">Tahan di layar</span>';
     if (naskah && slide.flag) tags += `<span class="tag flag">${escapeHtml(slide.flag)}</span>`;
     const konten = renderKonten(!naskah && slide.kontenMahasiswa ? slide.kontenMahasiswa : slide.konten);
-    const extra = naskah
-      ? `<div class="visual"><span class="vlabel">Arahan visual</span><p>${inline(slide.visual)}</p></div>` +
-        `<div class="notes"><span class="vlabel">Catatan pengampu</span><p>${inline(slide.notes)}</p></div>`
+    const hidden = naskah
+      ? `<div class="notes">${inline(slide.notes)}</div>` +
+        `<div class="visual">${inline(slide.visual)}</div>`
       : '';
-    out.push(`<article class="slide"><div class="rail">${rail}</div><div class="card">` +
-      `<h2>${inline(slide.title)}</h2>${tags ? `<div class="tags">${tags}</div>` : ''}${konten}${extra}</div></article>`);
-  }
+    out.push(
+      `<section class="slide${index === 0 ? ' live' : ''}" id="s${slide.n}">` +
+      `<div class="inner">${unit}` +
+      `<${index === 0 ? 'h1' : 'h2'}>${inline(slide.title)}</${index === 0 ? 'h1' : 'h2'}>` +
+      `${tags ? `<div class="tags">${tags}</div>` : ''}${konten}${hidden}</div></section>`,
+    );
+  });
 
-  out.push(`<footer><p>${inline(fm.footer ?? '')}</p></footer></div>`);
+  out.push('</div>');
+  if (naskah) out.push('<div id="pane"></div>');
+  out.push(
+    '<div class="hud">' +
+    `<span class="name">${escapeHtml(fm.topic ?? fm.course ?? '')}</span>` +
+    '<span class="grow">' +
+    (naskah ? '<button id="notes-toggle" type="button">Catatan (N)</button>' : '') +
+    '<button id="prev" type="button">←</button>' +
+    '<button id="next" type="button">→</button>' +
+    '<span id="count">1 / 1</span></span></div>',
+  );
+  out.push(`<script>${NAV}</script>`);
   return out.join('\n');
 }
 
@@ -598,26 +651,276 @@ export function applyMap(text, map) {
   return out;
 }
 
+// ── restamp ───────────────────────────────────────────────────────────────────
+
+const STAMP_ANY = /^`\[min \d+ · \d{1,2}:\d{2}\]`\s*/;
+
+/**
+ * Rewrites every `[min · clock]` from the DUR budget. Hand-computing these was the
+ * single biggest authoring cost, and a stamp that drifts from its segment is invisible
+ * until someone is standing in front of the room (ADR 0006).
+ */
+export function restamp(text) {
+  const spec = parseSpec(text);
+  const errors = validate(spec).filter((e) => /DUR/.test(e.message));
+  if (errors.length) return { text, errors };
+  if (!spec.slides.some((s) => s.dur !== null)) return { text, errors: [] };
+
+  const start = spec.frontmatter['slot-start'];
+  let minute = 0;
+  const wanted = new Map();
+  for (const slide of spec.slides) {
+    wanted.set(slide.n, `\`[min ${String(minute).padStart(3, '0')} · ${clockAt(start, minute)}]\` `);
+    minute += slide.dur ?? 0;
+  }
+
+  let current = null;
+  const out = text.split('\n').map((line) => {
+    const slideMatch = SLIDE_RE.exec(line);
+    if (slideMatch) {
+      current = Number(slideMatch[1]);
+      return line;
+    }
+    if (current === null || !line.startsWith('**NOTES**')) return line;
+    const body = line.slice('**NOTES**'.length).trimStart().replace(STAMP_ANY, '');
+    return `**NOTES** ${wanted.get(current)}${body}`;
+  });
+  return { text: out.join('\n'), errors: [] };
+}
+
+// ── materi.md ─────────────────────────────────────────────────────────────────
+
+const GENERATED_BANNER = [
+  '> [!warning] Berkas ini dihasilkan — jangan disunting',
+  '> Dihasilkan dari naskah dengan `deck.mjs render`. Suntingan di sini akan hilang pada',
+  '> render berikutnya. Ubah naskahnya, lalu render ulang.',
+].join('\n');
+
+/**
+ * The student-facing markdown. Built by re-emitting the slides rather than by deleting
+ * lines, so NOTES and VISUAL are never written rather than stripped afterwards (ADR 0002).
+ */
+export function renderMateri(text) {
+  const spec = parseSpec(text);
+  const fm = spec.frontmatter;
+  const out = [
+    '---',
+    'type: session-materi',
+    `course: ${fm.course ?? ''}`,
+    `session: ${fm.session ?? ''}`,
+    'generated: true',
+    '---',
+    '',
+    `# ${fm.topic ?? fm.course ?? 'Materi'}`,
+    '',
+    GENERATED_BANNER,
+    '',
+  ];
+  for (const slide of spec.slides) {
+    out.push(`## ${slide.n} · ${slide.title}`, '');
+    if (slide.hold) out.push('*Tahan di layar selama blok kerja.*', '');
+    out.push(slide.kontenMahasiswa || slide.konten, '');
+  }
+  return out.join('\n');
+}
+
+// ── approval ──────────────────────────────────────────────────────────────────
+
+const APPROVAL_KEYS = ['status', 'approved-sha256', 'approved-on'];
+
+const withoutApproval = (text) => text
+  .split('\n')
+  .filter((line) => !APPROVAL_KEYS.some((key) => line.startsWith(`${key}:`)))
+  .join('\n');
+
+/** Hash of the naskah with its own approval lines removed, so stamping is stable. */
+const approvalDigest = (text) => createHash('sha256').update(withoutApproval(text)).digest('hex');
+
+/** Stamps approval into the frontmatter, replacing any previous stamp. */
+export function approve(text, today) {
+  const stripped = withoutApproval(text);
+  const stamp = [
+    'status: approved',
+    `approved-sha256: ${approvalDigest(stripped)}`,
+    `approved-on: ${today}`,
+  ].join('\n');
+  const end = stripped.indexOf('\n---', 4);
+  return `${stripped.slice(0, end)}\n${stamp}${stripped.slice(end)}`;
+}
+
+/**
+ * Approval is bound to content, because the failure worth stopping is approve → tweak →
+ * ship: the thing that reaches the room was never the thing that was reviewed.
+ */
+export function approvalState(text) {
+  const { frontmatter } = parseSpec(text);
+  if (frontmatter.status !== 'approved' || !frontmatter['approved-sha256']) {
+    return { state: 'unapproved', message: 'not approved — run `deck.mjs approve`' };
+  }
+  if (approvalDigest(text) !== frontmatter['approved-sha256']) {
+    return {
+      state: 'stale',
+      message: `changed since approval on ${frontmatter['approved-on']} — re-review, then approve again`,
+    };
+  }
+  return { state: 'approved', message: `approved ${frontmatter['approved-on']}` };
+}
+
+// ── RPS contract ──────────────────────────────────────────────────────────────
+//
+// Two tables are well-formed enough to parse and vary per session; three prose blocks
+// live inside single table cells, change roughly never, and are handed to the agent to
+// read instead of parsed (ADR 0005).
+
+// Mapped by header name, never by position: BI carries a CPMK column and the other two
+// courses do not, so a fixed 7-column signature silently shifts every field.
+const WEEKLY_REQUIRED = ['sesi', 'bobot', 'sub-cpmk', 'penilaian', 'metode', 'materi'];
+const WEEKLY_ALL = ['sesi', 'bobot', 'cpmk', 'sub-cpmk', 'penilaian', 'metode', 'materi'];
+const PROSE_BLOCKS = {
+  bobot: /BOBOT PENILAIAN/i,
+  ketentuan: /Ketentuan Penilaian/i,
+  pustaka: /PUSTAKA UTAMA/i,
+};
+
+const cellsOf = (line) => line.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+const plain = (cell) => cell.replace(/\*\*/g, '').trim();
+
+/** Extracts one session's row plus the rubric, and locates the prose blocks. */
+export function parseRps(text, session) {
+  const lines = text.split('\n');
+  let row = null;
+  const rubric = [];
+  const blocks = {};
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    for (const [name, re] of Object.entries(PROSE_BLOCKS)) {
+      if (!blocks[name] && re.test(line)) blocks[name] = index + 1;
+    }
+    if (!line.trim().startsWith('|')) continue;
+    const headers = cellsOf(line).map((c) => plain(c).toLowerCase());
+
+    if (!row && WEEKLY_REQUIRED.every((col) => headers.includes(col))) {
+      const columns = Object.fromEntries(WEEKLY_ALL.map((c) => {
+        const position = headers.indexOf(c);
+        return [c, position === -1 ? null : position];
+      }));
+      for (let scan = index + 2; scan < lines.length && lines[scan].trim().startsWith('|'); scan += 1) {
+        const cells = cellsOf(lines[scan]).map(plain);
+        const pick = (name) => (columns[name] === null ? '' : cells[columns[name]] ?? '');
+        if (Number(pick('sesi')) !== session) continue;
+        const materi = pick('materi');
+        row = {
+          sesi: session,
+          bobot: pick('bobot'),
+          cpmk: pick('cpmk'),
+          subCpmk: pick('sub-cpmk'),
+          penilaian: pick('penilaian'),
+          metode: pick('metode'),
+          materi,
+          materiTopics: materi.split(';').map((topic) => topic.trim()).filter(Boolean),
+          line: scan + 1,
+        };
+        break;
+      }
+    }
+
+    if (headers[0] === 'kriteria' && headers[1] === 'bobot') {
+      for (let scan = index + 2; scan < lines.length && lines[scan].trim().startsWith('|'); scan += 1) {
+        const cells = cellsOf(lines[scan]).map(plain);
+        rubric.push({ kriteria: cells[0], bobot: cells[1] });
+      }
+    }
+  }
+
+  if (!row) throw new Error(`sesi ${session} not found in the RPS weekly table`);
+  return { row, rubric, blocks };
+}
+
+// ── extraction ────────────────────────────────────────────────────────────────
+//
+// Sanitising a 989-line implementation plan produces a 989-line file, which is not what
+// a one-page classroom handout needs. Which sections to keep is judgement; cutting them
+// out once chosen is not (ADR 0004).
+
+const HEADING_RE = /^(#{1,6})\s+(.*?)\s*$/;
+
+/** One or more named sections (with their nested subsections), or a 1-indexed line range. */
+export function extract(text, { section, lines } = {}) {
+  if (lines) {
+    const [from, to] = String(lines).split('-').map(Number);
+    return text.split('\n').slice(from - 1, to).join('\n');
+  }
+  if (!section) return text;
+
+  const asked = Array.isArray(section) ? section : [section];
+  const wanted = asked.map((s) => s.toLowerCase());
+  const all = text.split('\n');
+  const kept = [];
+  const found = new Set();
+
+  for (let index = 0; index < all.length; index += 1) {
+    const heading = HEADING_RE.exec(all[index]);
+    if (!heading) continue;
+    const name = heading[2].toLowerCase();
+    if (!wanted.some((w) => name.includes(w))) continue;
+    found.add(wanted.find((w) => name.includes(w)));
+    const depth = heading[1].length;
+    kept.push(all[index]);
+    for (let scan = index + 1; scan < all.length; scan += 1) {
+      const next = HEADING_RE.exec(all[scan]);
+      // A deeper heading belongs to this section; a same-or-shallower one ends it.
+      if (next && next[1].length <= depth) break;
+      kept.push(all[scan]);
+    }
+    kept.push('');
+  }
+
+  // Echo what was asked for, not the lowercased form used to match it.
+  const missing = asked.filter((s) => !found.has(s.toLowerCase()));
+  if (missing.length) throw new Error(`section not found: ${missing.join(', ')}`);
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // ── cli ───────────────────────────────────────────────────────────────────────
+
+const OPTION_KEYS = new Set(['section', 'lines']);
 
 function parseArgs(argv) {
   const flags = new Set();
+  const options = {};
   const positional = [];
-  for (const arg of argv) {
-    if (arg.startsWith('--')) flags.add(arg.slice(2));
-    else positional.push(arg);
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) { positional.push(arg); continue; }
+    const name = arg.slice(2);
+    if (name.includes('=')) {
+      const [key, ...rest] = name.split('=');
+      options[key] = rest.join('=');
+    } else if (argv[i + 1] && !argv[i + 1].startsWith('--') && OPTION_KEYS.has(name)) {
+      options[name] = argv[i + 1];
+      i += 1;
+    } else {
+      flags.add(name);
+    }
   }
-  return { command: positional[0], args: positional.slice(1), flags };
+  return { command: positional[0], args: positional.slice(1), flags, options };
 }
 
-const USAGE = `rps-deck — build session decks from a reviewed spec
+const USAGE = `rps-deck — build session decks from a naskah you author and review
 
-  check <spec.md>                    validate the spec
-  build [--final] <spec.md>          emit naskah + materi (--final refuses open FLAGs)
-  scan <file> <map.json>             residual identifier scan
+  session  <n> <rps.md>              read the RPS contract for one session
+  restamp  <naskah.md>               recompute every clock stamp from DUR
+  check    <naskah.md>               validate the naskah
+  render   <naskah.md>               emit the student-facing Materi.md
+  approve  <naskah.md>               stamp approval, bound to the content hash
+  build    [--final] <naskah.md>     emit both projectable decks
+  scan     <file> <map.json>         residual identifier scan
   sanitise <src> <map.json> <dst>    apply the map, then scan the result
+             [--section "A|B"]       keep only these sections (with subsections)
+             [--lines 20-90]         keep only this line range
 
-The spec .md is the source of truth; everything else is derived.`;
+The naskah .md is the source of truth; everything else is derived.`;
 
 function reportErrors(errors) {
   for (const error of errors) {
@@ -626,96 +929,231 @@ function reportErrors(errors) {
   }
 }
 
-async function main() {
-  const { readFileSync, writeFileSync } = await import('node:fs');
-  const { basename, dirname, join } = await import('node:path');
-  const { command, args, flags } = parseArgs(process.argv.slice(2));
+/** Loads a naskah and refuses to go further while it is invalid. */
+function loadNaskah(path) {
+  const text = readFileSync(path, 'utf8');
+  const spec = parseSpec(text);
+  const errors = validate(spec);
+  return { text, spec, errors };
+}
 
-  if (!command || flags.has('help')) {
-    console.log(USAGE);
+const cmdSession = ({ args }) => {
+  const [number, rpsPath] = [Number(args[0]), args[1]];
+  if (!number || !rpsPath) {
+    console.error('  ✗ usage: session <n> <rps.md>');
+    return 1;
+  }
+  let parsed;
+  try {
+    parsed = parseRps(readFileSync(rpsPath, 'utf8'), number);
+  } catch (err) {
+    console.error(`  ✗ ${err.message}`);
+    return 1;
+  }
+  const { row, rubric, blocks } = parsed;
+  console.log(`✓ sesi ${row.sesi} · bobot ${row.bobot} · CPMK ${row.cpmk}   (line ${row.line})`);
+  console.log(`    sub-cpmk : ${row.subCpmk}`);
+  console.log(`    penilaian: ${row.penilaian}`);
+  console.log(`    metode   : ${row.metode}`);
+  console.log(`    materi   : ${row.materiTopics.length} topik`);
+  for (const topic of row.materiTopics) console.log(`               · ${topic}`);
+  if (rubric.length) {
+    console.log(`✓ rubrik   : ${rubric.map((r) => `${r.kriteria} ${r.bobot}`).join(' · ')}`);
+  }
+  console.log('› blok prosa — baca sendiri, tidak diparse:');
+  for (const [name, line] of Object.entries(blocks)) {
+    console.log(`    ${name.padEnd(10)} line ${line}`);
+  }
+  return 0;
+};
+
+const cmdRestamp = ({ args }) => {
+  const path = args[0];
+  const original = readFileSync(path, 'utf8');
+  const { text, errors } = restamp(original);
+  if (errors.length) {
+    console.error(`✗ ${basename(path)}`);
+    reportErrors(errors);
+    return 1;
+  }
+  const spec = parseSpec(text);
+  const total = spec.slides.reduce((sum, s) => sum + (s.dur ?? 0), 0);
+  if (text === original) {
+    console.log(`✓ ${basename(path)} — ${spec.slides.length} slides · Σ DUR ${total} · stamps already correct`);
     return 0;
   }
+  writeFileSync(path, text);
+  console.log(`✓ ${basename(path)} — ${spec.slides.length} slides · Σ DUR ${total} = slot · stamps rewritten`);
+  return 0;
+};
 
-  if (command === 'check' || command === 'build') {
-    const path = args[0];
-    if (!path) {
-      console.error('  ✗ no spec given');
+const cmdCheck = ({ args }) => {
+  const path = args[0];
+  if (!path) {
+    console.error('  ✗ no naskah given');
+    return 1;
+  }
+  const { spec, errors } = loadNaskah(path);
+  if (errors.length) {
+    console.error(`✗ ${basename(path)} — ${errors.length} problem(s)`);
+    reportErrors(errors);
+    return 1;
+  }
+  console.log(`✓ ${basename(path)} — ${spec.slides.length} slides, clock consistent`);
+  const open = spec.slides.filter((s) => s.flag);
+  if (open.length) console.log(`  ⚠ ${open.length} open FLAG(s)`);
+  return 0;
+};
+
+const cmdRender = ({ args }) => {
+  const path = args[0];
+  const { text, errors } = loadNaskah(path);
+  if (errors.length) {
+    console.error(`✗ ${basename(path)} — fix the naskah first`);
+    reportErrors(errors);
+    return 1;
+  }
+  const target = join(dirname(path), basename(path).replace(/Naskah\.md$/i, 'Materi.md'));
+  if (target === path) {
+    console.error('  ✗ naskah filename must end in "Naskah.md" so the materi has a name');
+    return 1;
+  }
+  const materi = renderMateri(text);
+  if (/\*\*NOTES\*\*|\*\*VISUAL\*\*/.test(materi)) {
+    console.error('  ✗ materi leaked an instructor field — refusing to write');
+    return 1;
+  }
+  writeFileSync(target, materi);
+  console.log(`  ✓ ${basename(target)} — generated, do not edit`);
+  return 0;
+};
+
+const cmdApprove = ({ args }) => {
+  const path = args[0];
+  const { text, errors } = loadNaskah(path);
+  if (errors.length) {
+    console.error(`✗ ${basename(path)} — cannot approve an invalid naskah`);
+    reportErrors(errors);
+    return 1;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  writeFileSync(path, approve(text, today));
+  console.log(`  ✓ ${basename(path)} approved · ${today}`);
+  return 0;
+};
+
+const cmdBuild = ({ args, flags }) => {
+  const path = args[0];
+  if (!path) {
+    console.error('  ✗ no naskah given');
+    return 1;
+  }
+  const { text, spec, errors } = loadNaskah(path);
+  if (errors.length) {
+    console.error(`✗ ${basename(path)} — ${errors.length} problem(s)`);
+    reportErrors(errors);
+    return 1;
+  }
+  const open = spec.slides.filter((s) => s.flag);
+
+  // --final is the day-you-teach gate: reviewed, approved, nothing unresolved.
+  if (flags.has('final')) {
+    const approval = approvalState(text);
+    if (approval.state !== 'approved') {
+      console.error(`✗ ${basename(path)} — ${approval.message}`);
       return 1;
     }
-    const spec = parseSpec(readFileSync(path, 'utf8'));
-    const errors = validate(spec);
-    if (errors.length) {
-      console.error(`✗ ${basename(path)} — ${errors.length} problem(s)`);
-      reportErrors(errors);
-      return 1;
-    }
-    const open = spec.slides.filter((s) => s.flag);
-    if (command === 'check') {
-      console.log(`✓ ${basename(path)} — ${spec.slides.length} slides, clock consistent`);
-      if (open.length) console.log(`  ⚠ ${open.length} open FLAG(s)`);
-      return 0;
-    }
-
-    // Two gates, because previewing with a placeholder is legitimate and teaching from
-    // one is not (ADR 0002 companion decision).
-    if (open.length && flags.has('final')) {
+    console.log(`  ✓ ${approval.message}`);
+    if (open.length) {
       console.error(`✗ ${open.length} open FLAG blocks release:`);
       reportErrors(open.map((s) => ({ line: s.line, message: `slide ${s.n} — ${s.flag}` })));
       return 1;
     }
-    if (open.length) {
-      console.log(`⚠ ${open.length} open FLAG:`);
-      for (const slide of open) console.log(`    slide ${slide.n} — ${slide.flag}`);
-    }
-
-    // `out-stem` keeps a republished deck on its existing artifact URL.
-    const stem = spec.frontmatter['out-stem'] ?? basename(path).replace(/\.md$/, '');
-    const dir = spec.frontmatter.out ? join(dirname(path), spec.frontmatter.out) : dirname(path);
-    for (const [audience, suffix] of [['naskah', 'pengampu'], ['materi', 'mahasiswa']]) {
-      const html = renderHtml(spec, { audience });
-      const target = join(dir, `${stem}-${suffix}.html`);
-      writeFileSync(target, html);
-      if (audience === 'materi') {
-        // Structural, not cosmetic: assert the promise the two code paths exist to keep.
-        const leaks = [/<div class="notes"/, /<div class="visual"/, /class="clk"/]
-          .filter((re) => re.test(html));
-        if (leaks.length) {
-          console.error(`  ✗ materi leaked instructor content: ${leaks.join(', ')}`);
-          return 1;
-        }
-      }
-      console.log(`  ✓ ${basename(target)}`);
-    }
-    return 0;
+  } else if (open.length) {
+    // Previewing with a placeholder is legitimate; teaching from one is not.
+    console.log(`⚠ ${open.length} open FLAG:`);
+    for (const slide of open) console.log(`    slide ${slide.n} — ${slide.flag}`);
   }
 
-  if (command === 'scan' || command === 'sanitise') {
-    const [source, mapPath, destination] = args;
-    const map = JSON.parse(readFileSync(mapPath, 'utf8'));
-    const text = command === 'scan'
-      ? readFileSync(source, 'utf8')
-      : applyMap(readFileSync(source, 'utf8'), map);
-    const hits = scanResiduals(text, map);
-    if (hits.length) {
-      console.error(`✗ ${hits.length} residual(s):`);
-      for (const hit of hits.slice(0, 40)) {
-        console.error(`  line ${hit.line} [${hit.kind}] ${hit.match}`);
+  const stem = spec.frontmatter['out-stem'] ?? basename(path).replace(/\.md$/, '');
+  const dir = spec.frontmatter.out ? join(dirname(path), spec.frontmatter.out) : dirname(path);
+  for (const [audience, suffix] of [['naskah', 'pengampu'], ['materi', 'mahasiswa']]) {
+    const html = renderHtml(spec, { audience });
+    if (audience === 'materi') {
+      // Structural, not cosmetic: assert the promise the two code paths exist to keep.
+      const leaks = [/class="notes"/, /class="visual"/, /id="pane"/].filter((re) => re.test(html));
+      if (leaks.length) {
+        console.error(`  ✗ materi leaked instructor content: ${leaks.join(', ')}`);
+        return 1;
       }
+    }
+    const target = join(dir, `${stem}-${suffix}.html`);
+    writeFileSync(target, html);
+    console.log(`  ✓ ${basename(target)}`);
+  }
+  return 0;
+};
+
+const cmdScan = ({ command, args, options }) => {
+  const [source, mapPath, destination] = args;
+  const map = JSON.parse(readFileSync(mapPath, 'utf8'));
+  let text;
+  if (command === 'scan') {
+    text = readFileSync(source, 'utf8');
+  } else {
+    const sections = options.section ? options.section.split('|') : null;
+    try {
+      text = applyMap(extract(readFileSync(source, 'utf8'), { section: sections, lines: options.lines }), map);
+    } catch (err) {
+      console.error(`  ✗ ${err.message}`);
       return 1;
     }
-    if (command === 'sanitise') {
-      writeFileSync(destination, text);
-      console.log(`  ✓ ${destination} — scan clean`);
-    } else {
-      console.log('  ✓ scan clean');
-    }
+  }
+  const hits = scanResiduals(text, map);
+  if (hits.length) {
+    console.error(`✗ ${hits.length} residual(s):`);
+    for (const hit of hits.slice(0, 40)) console.error(`  line ${hit.line} [${hit.kind}] ${hit.match}`);
+    return 1;
+  }
+  if (command === 'sanitise') {
+    writeFileSync(destination, text);
+    // The map lives beside its output: one source artifact is reused by many sessions,
+    // and re-deriving it each time is how identifiers get missed.
+    const mapBeside = `${destination.replace(/\.md$/, '')}.map.json`;
+    writeFileSync(mapBeside, `${JSON.stringify(map, null, 2)}\n`);
+    console.log(`  ✓ ${basename(destination)} — ${text.split('\n').length} lines, scan clean`);
+    console.log(`  ✓ ${basename(mapBeside)} — map kept for reuse`);
+  } else {
+    console.log('  ✓ scan clean');
+  }
+  return 0;
+};
+
+const COMMANDS = {
+  session: cmdSession,
+  restamp: cmdRestamp,
+  check: cmdCheck,
+  render: cmdRender,
+  approve: cmdApprove,
+  build: cmdBuild,
+  scan: cmdScan,
+  sanitise: cmdScan,
+};
+
+function main() {
+  const context = parseArgs(process.argv.slice(2));
+  if (!context.command || context.flags.has('help')) {
+    console.log(USAGE);
     return 0;
   }
-
-  console.error(`unknown command: ${command}\n\n${USAGE}`);
-  return 1;
+  const run = COMMANDS[context.command];
+  if (!run) {
+    console.error(`unknown command: ${context.command}\n\n${USAGE}`);
+    return 1;
+  }
+  return run(context);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().then((code) => { process.exitCode = code; });
+  process.exitCode = main();
 }

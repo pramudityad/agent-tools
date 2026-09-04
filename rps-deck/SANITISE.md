@@ -32,11 +32,31 @@ Everything that makes it a teaching artifact: partitioning strategy, JSONB colum
 query patterns, logical foreign-key patterns across service boundaries, state machines,
 retention policy, every column name and type, every index.
 
+## Extract, then rename
+
+Sanitising a 989-line implementation plan produces a 989-line file. A classroom handout
+wants one page, and which sections to keep is judgement — so you choose them and the tool
+cuts:
+
+```sh
+node deck.mjs sanitise <source> <map.json> <destination> \
+  --section "Problem Statement|Background & Assumptions"
+
+node deck.mjs sanitise <source> <map.json> <destination> --lines 20-90
+```
+
+A named section carries its nested subsections and stops at the next same-or-shallower
+heading. A heading that is not there is an error, not an empty file.
+
 ## Verify
 
 ```sh
 node deck.mjs sanitise <source> <map.json> <destination>
 ```
+
+The map is written beside the output as `<destination>.map.json`. Keep it: one source
+artifact is reused across many sessions — the Sesi 1 ERD serves sixteen — and re-deriving
+the map each time is how identifiers get missed.
 
 Applies the map longest-key-first, then scans the output for every mapped identifier
 case-insensitively plus the generic classes. Non-zero exit means something survived.

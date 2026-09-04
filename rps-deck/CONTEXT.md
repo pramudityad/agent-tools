@@ -27,20 +27,27 @@ The written record of what was removed to fit the slot and where it went — a l
 a static slide, or nothing. Lives in the spec, not in the tool.
 _Avoid_: changelog, diff.
 
-**Spec**:
-`Sesi NN - Slide Generation Prompt.md` — the reviewed source of truth. Everything the tool
-emits is derived from it (ADR 0001).
-_Avoid_: manifest (names only §8 of it), script, prompt.
-
 **Naskah**:
-The instructor build. Carries speaker notes, visual directives and the clock rail. Never
-published, never shared.
-_Avoid_: instructor deck, teacher version.
+`Sesi NN - Naskah.md` — the one authored file and the source of truth. Everything else the
+tool emits is derived from it (ADR 0001). Carries slide content, speaker notes and visual
+directives together.
+_Avoid_: spec, manifest, script, prompt, instructor deck.
 
 **Materi**:
-The student build. Slide content only. Safe to hand out because the notes were never
-written into it, not because they are hidden (ADR 0002).
+`Sesi NN - Materi.md` and the student HTML — generated from the naskah, never edited.
+Safe to hand out because the notes were never written into it, not because they are hidden
+(ADR 0002).
 _Avoid_: student deck, public version, redacted version.
+
+**DUR**:
+A slide's length in minutes. The only machine-readable budget: `restamp` derives every
+clock stamp from it and `check` verifies the total equals the slot.
+_Avoid_: duration (ambiguous with the session's), timing, length.
+
+**Approval**:
+`status: approved` plus a hash of the naskah's content. Editing after approval revokes it,
+because the failure worth stopping is approve → tweak → ship.
+_Avoid_: sign-off, review status (review is the act; approval is the record).
 
 **Marker**:
 A word plus a space applied to the segment it starts — `LEAD:`, `PANEL`, `NUM`, `VEIL`,

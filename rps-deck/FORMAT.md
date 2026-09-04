@@ -23,6 +23,7 @@ title-materi: Pengantar BI Sesi 1
 ```
 ### SLIDE 22 · OLTP vs OLAP
 **UNIT** — U4 · Mengapa butuh sistem terpisah
+**DUR** 4
 **VISUAL** — tabel 3 kolom, 5 baris. Baris terakhir diberi penanda.
 **KONTEN**
 | Aksis | OLTP | OLAP |
@@ -40,9 +41,28 @@ number and line rather than being dropped. `UNIT` opens a new section. `HOLD` ma
 that stays on screen during a work block. `FLAG` declares something unresolved.
 `KONTEN-MAHASISWA` replaces `KONTEN` in the materi only.
 
-The `[min NNN · HH:MM]` stamp is required in `NOTES`. `check` recomputes every clock from
-`slot-start + min` and errors on any disagreement — the drift it exists to catch was 15
-minutes wide and sat unnoticed in the source note.
+## Time: DUR owns the clock
+
+`**DUR** <minutes>` declares how long a slide gets. `restamp` then computes every
+`[min NNN · HH:MM]` from `slot-start` plus the cumulative total, and fails when
+`Σ DUR ≠ slot-minutes`, naming the shortfall.
+
+```sh
+node deck.mjs restamp "Sesi 02 - Naskah.md"
+  ✓ 27 slides · Σ DUR 105 = slot · stamps rewritten
+```
+
+Durations are local judgement and easy to write; stamps are arithmetic and were the single
+biggest authoring cost before this existed. `DUR 0` is legitimate — two slides shown inside
+the same minute.
+
+Either every slide declares `DUR` or none do; a half-timed deck is an error. A naskah
+without `DUR` keeps hand-authored `[min NNN · HH:MM]` stamps in `NOTES`, and `check`
+verifies them against `slot-start + min` — the drift it exists to catch was 15 minutes wide
+and sat unnoticed in the source note.
+
+The naskah's cut table stays prose for the reader. `DUR` is the only machine-readable
+budget, so there is no second copy to drift.
 
 ## Markers
 
