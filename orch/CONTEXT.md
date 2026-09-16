@@ -42,18 +42,48 @@ kanban` and `hermes cron` respectively, and this tool does not use either as its
 `docs/adr/0003-jsonl-until-review-states-earn-kanban.md`).
 
 **Step**:
-One command within a recipe: an `id` and a `command` array. Commands are argv arrays, never
-shell strings — a step never passes through a shell, so there is nothing for a `{n}`
+One command within a recipe: an `id` and a `command` array, plus two optional fields —
+`agent` (the id of an `agents.json` roster entry that carries out this step) and `settings`
+(that step's own declared overrides, e.g. a specific `model`). Commands are argv arrays,
+never shell strings — a step never passes through a shell, so there is nothing for a
 placeholder substitution to accidentally break out of.
 _Avoid_: writing a step's `command` as a single string. `loadRecipe` rejects anything that
 is not an array.
+
+**Agent** (roster entry):
+One entry in `agents.json`: an `id`, a `harness`, and — only when model-backed — a `model`
+and its granted `capabilities`. `claude-planner` is the only model-backed entry in v1; it
+drives recipes and authors naskah. Every other entry (`rise-ops`, `rps-deck`, `graphify`,
+`hermes`) is a deterministic CLI with no model and nothing to grant.
+_Avoid_: assuming every roster entry carries a model — most don't, and `loadAgents` refuses
+`capabilities` declared on an entry with no `model` as `bad_input`.
 
 ## Configuration
 
 There is **no YAML parser anywhere in this repo**. Recipes and the agent roster are JSON;
 adding a YAML dependency would break the zero-dependency rule every sibling tool holds to.
-The `{n}` template syntax in a step's command tokens is orch's own minimal substitution —
-not a general templating language, and not evaluated by a shell.
+A step's command tokens support two closed forms of substitution, never a shell and never
+general templating: `{n}` (1-indexed) pulls from `orch run`'s positional args; any other
+`{name}` pulls from that step's own *resolved* settings — the output of `resolveConfig`, so
+a step whose command names `{model}` genuinely runs with whatever model won precedence for
+that run, not a copy the owner has to keep in sync by hand.
+
+Four files, two of them versioned with the tool and two machine-local:
+
+| File | Versioned? | Holds |
+| :--- | :--- | :--- |
+| `agents.json` | yes | the roster — every agent's harness, model, and granted capabilities |
+| `recipes/*.json` | yes | the recipes themselves |
+| `~/.config/orch/config.json` | no | machine-local settings only — paths, delivery target |
+| `~/.config/orch/audit.jsonl` | no | the run ledger (see below) |
+
+An effective setting (a step's `model`, say) resolves through `resolveConfig`, most specific
+first: a `--set key=value` flag passed to `orch run` for one invocation beats what the
+recipe step itself declares, which beats that step's named agent's `agents.json` entry,
+which beats `~/.config/orch/config.json`. A key absent at one level falls through to the
+next rather than blanking out a real value below it.
+_Avoid_: editing `agents.json` to work around a one-off need for a different model — `orch
+run <recipe> --set model=...` does that for a single run without touching a file.
 
 ## Audit log
 

@@ -1,0 +1,14 @@
+{
+  "agents": [
+    {
+      "id": "claude-planner",
+      "harness": "claude",
+      "model": "claude-sonnet-5",
+      "capabilities": ["read", "edit", "bash"]
+    },
+    { "id": "rise-ops", "harness": "cli" },
+    { "id": "rps-deck", "harness": "cli" },
+    { "id": "graphify", "harness": "cli" },
+    { "id": "hermes", "harness": "cli" }
+  ]
+}
