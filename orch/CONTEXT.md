@@ -27,10 +27,30 @@ Where a scheduled recipe's expensive work runs, relative to the agent turn that 
 Three envelopes: `script` (the work runs *outside* the turn; its stdout is injected as
 context for the agent to summarise), `monitor` (a byte-stable gate — unchanged output
 suppresses the run entirely, at zero cost), `agent` (a plain turn with no external script).
+The envelope a schedule declares decides which script slot it may fill: `script` requires a
+`script`, `monitor` requires a `monitorScript`, and `agent` declares neither.
 _Avoid_: putting long-running work inside an `agent` turn. That pairing — `envelope: "agent"`
 plus a script the agent is expected to shell out to — is the exact defect that has broken the
 combo-benchmark job's scheduled runs since 2026-09-13 while its manual runs kept passing. It
-is refused as `envelope_mismatch` wherever orch can see it declared.
+is refused as `envelope_mismatch` in `loadSchedule`, the only way a schedule can be
+constructed (`docs/adr/0004-envelope-mismatch-unrepresentable.md`), and jobs created by other
+tools before this one existed are caught by `orch doctor` instead.
+_Avoid_: thinking the schedule alone closes the hole. A scheduled job's prompt runs `orch run
+<recipe>`, so the recipe's own steps are the other half: a scheduled recipe whose step shells
+out to a hermes script puts the same work back inside the turn and is refused at load time as
+`envelope_mismatch` too. A scheduled recipe's steps are the cheap remainder — the part that
+genuinely needs the turn.
+
+**Schedule**:
+A recipe's cron expression plus the Envelope its work runs in, held in the recipe file itself
+so there is one versioned source of truth for what a recipe does and when it runs. `orch
+schedule` registers it with `hermes cron` and records it in the recipe only after the
+scheduler has accepted the job. Where the job delivers is deliberately not part of it: a
+destination is a machine fact, so it comes from `--deliver` or `~/.config/orch/config.json`
+at registration and is never written into the recipe.
+_Avoid_: scheduling a recipe by hand-editing the recipe and running `hermes cron create`
+yourself — that path skips the `envelope_mismatch` refusal, which is the entire point of
+routing every schedule through `loadSchedule`.
 
 **Run**:
 One instantiation of a recipe, identified by a run id, recorded as lines appended to
@@ -41,6 +61,16 @@ _Avoid_: "task" or "job" for a Run specifically — those names are already owne
 kanban` and `hermes cron` respectively, and this tool does not use either as its ledger (see
 `docs/adr/0003-jsonl-until-review-states-earn-kanban.md`).
 
+**Open run**:
+A Run that no passing Verify line has closed — the honest answer to "what is in flight", since
+every step exiting zero is a different claim (ADR 0002). `orch status` states each one as
+`unverified` (everything recorded exited zero, but nothing has checked it), `failed` (the last
+step exited non-zero, so the steps after it never ran), or `verify failed` (every step passed
+and the declared check did not — a different finding with a different fix).
+_Avoid_: reading "open" as "currently executing". The audit log records a step once it has
+returned, so a run killed mid-flight looks like one still working and both read `unverified` —
+a reason to go and check rather than to assume either way.
+
 **Step**:
 One command within a recipe: an `id` and a `command` array, plus two optional fields —
 `agent` (the id of an `agents.json` roster entry that carries out this step) and `settings`
@@ -49,6 +79,9 @@ never shell strings — a step never passes through a shell, so there is nothing
 placeholder substitution to accidentally break out of.
 _Avoid_: writing a step's `command` as a single string. `loadRecipe` rejects anything that
 is not an array.
+_Avoid_: giving a step the id `verify`. `orch verify` records its own line under that id, and
+that line is the only thing that closes a Run — so `loadRecipe` refuses the id as `bad_input`,
+and a step can never close a run it did not check.
 
 **Agent** (roster entry):
 One entry in `agents.json`: an `id`, a `harness`, and — only when model-backed — a `model`
@@ -57,6 +90,15 @@ drives recipes and authors naskah. Every other entry (`rise-ops`, `rps-deck`, `g
 `hermes`) is a deterministic CLI with no model and nothing to grant.
 _Avoid_: assuming every roster entry carries a model — most don't, and `loadAgents` refuses
 `capabilities` declared on an entry with no `model` as `bad_input`.
+
+**Layer**:
+A harness orch sits on top of, and therefore depends on being reachable before a recipe
+failure can be trusted to be the recipe's fault. v1 has two — `claude` and `hermes`. `orch
+doctor` probes each one and reports an unreachable harness as `layer_down`, so a broken layer
+is never mistaken for a broken recipe.
+_Avoid_: expecting `doctor` to probe the CLI tools a recipe calls (`rise-ops`, `rps-deck`,
+`graphify`). Those are Steps inside a layer that already answered; a missing one surfaces as a
+failed step carrying its own message, not as a layer finding.
 
 ## Configuration
 
@@ -73,9 +115,16 @@ Four files, two of them versioned with the tool and two machine-local:
 | File | Versioned? | Holds |
 | :--- | :--- | :--- |
 | `agents.json` | yes | the roster — every agent's harness, model, and granted capabilities |
-| `recipes/*.json` | yes | the recipes themselves |
+| `recipes/*.json` | yes | the recipes themselves, each with its optional `schedule` |
 | `~/.config/orch/config.json` | no | machine-local settings only — paths, delivery target |
 | `~/.config/orch/audit.jsonl` | no | the run ledger (see below) |
+
+A recipe may declare a `schedule`, and it is deliberately a closed schema —
+`{cron, envelope, script|monitorScript, workdir?}`. The envelope decides which script slot is
+even legal, and a fifth field is refused as `bad_input` rather than accepted and ignored: a
+setting orch reads past is a setting that looks configured and does nothing. It is versioned
+with the recipe because it is behaviour, not a machine fact; the one field a machine supplies
+instead — the delivery target — is not part of it at all.
 
 An effective setting (a step's `model`, say) resolves through `resolveConfig`, most specific
 first: a `--set key=value` flag passed to `orch run` for one invocation beats what the

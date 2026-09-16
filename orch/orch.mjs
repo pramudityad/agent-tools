@@ -13,11 +13,16 @@
 // The ledger is a JSONL file, not a task board (ADR 0003), until review states exist to
 // justify one. Every step of every run appends one line to ~/.config/orch/audit.jsonl.
 //
+// The envelope mismatch is unrepresentable by construction (ADR 0004). A schedule's envelope
+// decides which script slot it may fill, so "envelope: agent plus a script" has nowhere to
+// live in the schema and is refused in loadSchedule. Scheduling itself goes through
+// `hermes cron`, which orch calls and never reimplements.
+//
 // Output contract: CONTRACT.md (same directory). Exit 0 on success; on failure one compact
 // JSON object on stderr: {"error": "...", "code": "..."} where code is one of
 // no_verify | bad_input | envelope_mismatch | verify_failed | step_failed | layer_down | io_error.
 
-import { readFileSync, mkdirSync, appendFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -33,6 +38,17 @@ const CONFIG_DIR = join(homedir(), '.config', 'orch');
 const AUDIT_FILE = join(CONFIG_DIR, 'audit.jsonl');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
+// The scheduler's own job store. orch reads it as data so `doctor` can audit jobs that
+// predate this tool; it never writes it — `hermes cron` owns it.
+const CRON_JOBS_FILE = join(homedir(), '.hermes', 'cron', 'jobs.json');
+
+// The harnesses v1 depends on — see CONTEXT.md's Layer entry. orca, command-code and pi
+// have nothing to do until the implementation lane lands, so `doctor` does not probe them.
+const LAYERS = ['claude', 'hermes'];
+
+// How long `orch status --insights` will wait on `hermes insights` before giving up on it.
+const INSIGHTS_TIMEOUT_MS = 15000;
+
 // ── errors ────────────────────────────────────────────────────────────────────
 
 export class OrchError extends Error {
@@ -46,7 +62,13 @@ const fail = (code, message) => {
   throw new OrchError(code, message);
 };
 
+/** A caught value's message, for the places that report a failure rather than throwing one. */
+const message = (err) => (err instanceof Error ? err.message : String(err));
+
 // ── recipe ────────────────────────────────────────────────────────────────────
+
+// The step id `orch verify` records its own line under. Reserved: see `loadRecipe`.
+const VERIFY_STEP_ID = 'verify';
 
 /** A non-empty array of non-empty strings. */
 function isCommand(value) {
@@ -76,6 +98,11 @@ export function loadRecipe(obj) {
     if (typeof step.id !== 'string' || step.id.length === 0) {
       fail('bad_input', `recipe "${obj.name}" step ${i} is missing a non-empty id`);
     }
+    if (step.id === VERIFY_STEP_ID) {
+      // `orch verify` writes its line under this id, and that line is the only thing that
+      // closes a run. A step free to write one would close runs it never checked (ADR 0002).
+      fail('bad_input', `recipe "${obj.name}" step "${step.id}" uses the reserved id "${VERIFY_STEP_ID}", which the declared check writes`);
+    }
     if (!isCommand(step.command)) {
       fail('bad_input', `recipe "${obj.name}" step "${step.id}" must declare a non-empty command array`);
     }
@@ -96,7 +123,240 @@ export function loadRecipe(obj) {
   if (typeof obj.verify !== 'object' || obj.verify === null || !isCommand(obj.verify.command)) {
     fail('no_verify', `recipe "${obj.name}" declares no Verify — refusing to run unverifiable work`);
   }
-  return { name: obj.name, steps, verify: { command: obj.verify.command } };
+  const recipe = { name: obj.name, steps, verify: { command: obj.verify.command } };
+  if (obj.schedule !== undefined) recipe.schedule = loadSchedule(obj.schedule);
+  assertSchedulable(recipe);
+  return recipe;
+}
+
+// ── schedule ──────────────────────────────────────────────────────────────────
+
+const ENVELOPES = ['script', 'monitor', 'agent'];
+
+// Deliberately closed. A machine-local setting — a delivery target, say — lives in
+// ~/.config/orch/config.json, where it applies to every registration on this machine, rather
+// than in a versioned recipe that would carry one machine's destination to another.
+const SCHEDULE_FIELDS = ['cron', 'envelope', 'script', 'monitorScript', 'workdir'];
+
+/**
+ * Validates a schedule — where a recipe's expensive work runs, relative to the agent turn
+ * that reports it. Throws `bad_input` for a malformed shape and `envelope_mismatch` for the
+ * pairing that has been killing the combo-benchmark job every morning since 2026-09-13.
+ *
+ * The envelope decides which script slot the schedule may fill, which is what makes the
+ * mismatch unrepresentable rather than merely discouraged (ADR 0004): `script` requires a
+ * `script`, `monitor` requires a `monitorScript`, and `agent` declares neither — a script
+ * named under `agent` is work placed inside the turn, where an idle limit kills it.
+ */
+export function loadSchedule(obj) {
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+    fail('bad_input', 'schedule must be an object');
+  }
+  for (const key of Object.keys(obj)) {
+    if (!SCHEDULE_FIELDS.includes(key)) {
+      fail(
+        'bad_input',
+        `schedule has an unknown field "${key}" — it accepts ${SCHEDULE_FIELDS.join(', ')}; a machine-local setting such as a delivery target belongs in ~/.config/orch/config.json instead`,
+      );
+    }
+  }
+  if (typeof obj.cron !== 'string' || obj.cron.trim().length === 0) {
+    fail('bad_input', 'schedule.cron must be a non-empty cron expression');
+  }
+  if (!ENVELOPES.includes(obj.envelope)) {
+    fail('bad_input', `schedule.envelope must be one of ${ENVELOPES.join(' | ')} — got ${JSON.stringify(obj.envelope)}`);
+  }
+  for (const key of ['script', 'monitorScript', 'workdir']) {
+    if (obj[key] !== undefined && (typeof obj[key] !== 'string' || obj[key].length === 0)) {
+      fail('bad_input', `schedule.${key} must be a non-empty string`);
+    }
+  }
+  if (obj.envelope === 'agent' && obj.script !== undefined) {
+    fail(
+      'envelope_mismatch',
+      `schedule declares envelope "agent" together with script "${obj.script}" — that places the work inside the agent turn, where an idle limit kills it; declare envelope "script" so the work runs outside the turn and only its stdout enters`,
+    );
+  }
+  if (obj.envelope === 'agent' && obj.monitorScript !== undefined) {
+    fail(
+      'envelope_mismatch',
+      `schedule declares envelope "agent" together with monitorScript "${obj.monitorScript}" — a gate outside the turn IS the "monitor" envelope; a plain turn has no gate`,
+    );
+  }
+  if (obj.envelope === 'script' && obj.script === undefined) {
+    fail('bad_input', 'schedule declares envelope "script" but names no script');
+  }
+  if (obj.envelope === 'monitor' && obj.monitorScript === undefined) {
+    fail('bad_input', 'schedule declares envelope "monitor" but names no monitorScript');
+  }
+  const schedule = { cron: obj.cron.trim(), envelope: obj.envelope };
+  for (const key of ['script', 'monitorScript', 'workdir']) {
+    if (obj[key] !== undefined) schedule[key] = obj[key];
+  }
+  return schedule;
+}
+
+/**
+ * Refuses a scheduled recipe whose own steps would do the work its envelope places elsewhere.
+ *
+ * This is the half of the envelope rule the schedule's shape cannot see (ADR 0004): a job's
+ * prompt runs `orch run <recipe>`, so a step that shells out to a hermes script puts exactly
+ * the work an envelope exists to hoist back inside the turn — and no scheduler flag can stop
+ * it, because the scheduler never sees the recipe. A hermes script is the mechanism for work
+ * that must run outside the turn; work cheap enough to be a step does not belong behind one.
+ *
+ * A scheduled recipe also may not use positional `{n}` placeholders: a scheduled dispatch
+ * passes no args, so such a job would fail every single time it ran.
+ */
+function assertSchedulable(recipe) {
+  if (!recipe.schedule) return;
+  for (const step of recipe.steps) {
+    const scripts = stepScripts(step.command);
+    if (scripts.length > 0) {
+      const fix =
+        recipe.schedule.envelope === 'agent'
+          ? `declare envelope "script" naming ${scripts.join(', ')} instead`
+          : `the schedule's own "${recipe.schedule.envelope}" script already covers work outside the turn — remove this step, or drop the schedule and run the recipe by hand`;
+      fail(
+        'envelope_mismatch',
+        `recipe "${recipe.name}" declares a schedule but step "${step.id}" runs ${scripts.join(', ')} inside the turn — that is the combo-benchmark defect; ${fix}`,
+      );
+    }
+    if (step.command.some((token) => /\{\d+\}/.test(token))) {
+      fail(
+        'bad_input',
+        `recipe "${recipe.name}" declares a schedule but step "${step.id}" references a positional {n} argument, which a scheduled dispatch never passes — the job would fail on every run`,
+      );
+    }
+  }
+}
+
+/** The name orch registers a recipe's scheduled job under, so `doctor` can find it again. */
+export function scheduledJobName(recipeName) {
+  return `orch-${recipeName}`;
+}
+
+/**
+ * The prompt a scheduled dispatch wakes up with. The envelope decides what the turn is for:
+ * under `script` the expensive work has already run and only its stdout arrived, so the turn
+ * must not run it again — that is the whole point of the envelope.
+ */
+const ENVELOPE_INSTRUCTION = {
+  script:
+    'Its expensive work has already run outside this turn and its output is in your context — summarise that output; do not run that work yourself.',
+  monitor:
+    'A monitor gate already confirmed something changed before this turn started; an unchanged result would have suppressed the run entirely.',
+  agent: 'This is a plain turn — no external script runs before it.',
+};
+
+function schedulePrompt(recipe) {
+  return `Run the orch recipe "${recipe.name}": orch run ${recipe.name}. ${ENVELOPE_INSTRUCTION[recipe.schedule.envelope]}`;
+}
+
+/**
+ * The argv for `hermes cron create`, derived from a recipe's declared schedule. Pure and
+ * asserted in tests without invoking hermes. Each envelope maps to its own scheduler flag —
+ * `script` to `--script` (its stdout is injected into the turn), `monitor` to
+ * `--monitor-script` (unchanged bytes suppress the run), `agent` to neither. A recipe with
+ * no declared schedule cannot be registered at all.
+ *
+ * `registration` carries this machine's settings for the job — `{deliver}` — which come from
+ * the CLI or `config.json` and are deliberately not part of the recipe: a destination belongs
+ * to a machine, not to versioned behaviour.
+ */
+export function cronArgs(recipe, registration = {}) {
+  if (!recipe.schedule) {
+    fail('bad_input', `recipe "${recipe.name}" declares no schedule — nothing to register`);
+  }
+  const { deliver } = registration;
+  if (deliver !== undefined && (typeof deliver !== 'string' || deliver.length === 0)) {
+    fail('bad_input', 'a delivery target must be a non-empty string');
+  }
+  const { cron, envelope, script, monitorScript, workdir } = recipe.schedule;
+  const argv = [
+    'hermes',
+    'cron',
+    'create',
+    cron,
+    schedulePrompt(recipe),
+    '--name',
+    scheduledJobName(recipe.name),
+  ];
+  if (envelope === 'script') argv.push('--script', script);
+  if (envelope === 'monitor') argv.push('--monitor-script', monitorScript);
+  if (workdir !== undefined) argv.push('--workdir', workdir);
+  if (deliver !== undefined) argv.push('--deliver', deliver);
+  return argv;
+}
+
+/**
+ * Extracts the hermes scripts a prompt tells the agent to shell out to. Matching an
+ * interpreter invocation of a `~/.hermes/scripts/` path — never a bare mention of one — is
+ * what keeps this a statement about the job's shape rather than about its prose: `job.prompt`
+ * is free text, and a prompt can *discuss* a path (a warning, an example) without running it.
+ */
+const SCRIPT_INVOCATION = /\b(?:python3?|bash|sh|zsh|node|uv)\s+(?:run\s+)?(\S*\.hermes\/scripts\/[^\s`'")\]]+)/g;
+
+function embeddedScripts(prompt) {
+  if (typeof prompt !== 'string') return [];
+  return [...prompt.matchAll(SCRIPT_INVOCATION)].map((match) => match[1]);
+}
+
+/**
+ * A `.hermes/scripts/` path, wherever it appears within a single command token.
+ *
+ * Deliberately *not* the interpreter-prefixed `SCRIPT_INVOCATION` above. A step's `command`
+ * is argv, never prose — there is no "just mentioning" a path in an array of literal tokens.
+ * A hermes script is executable on its own (shebang'd), so a step that names one directly,
+ * with no interpreter in front of it, is exactly as much the combo-benchmark defect as an
+ * interpreter-prefixed invocation; requiring an interpreter here left that door wide open.
+ */
+const SCRIPT_PATH = /\.hermes\/scripts\/[^\s`'")\]]+/;
+
+function stepScripts(command) {
+  return command.filter((token) => SCRIPT_PATH.test(token));
+}
+
+/**
+ * Finds the envelope defect in scheduled jobs that already exist — including ones that
+ * predate this tool, which is why the rule is inferred from the scheduler's own fields
+ * rather than from a schedule orch itself validated. A job that runs an agent turn and tells
+ * the agent to shell out to a hermes script has placed expensive work inside the turn, the
+ * exact shape that failed combo-benchmark every morning while passing by hand. A job whose
+ * `no_agent` is true has no turn to place work in, so it is never a finding.
+ *
+ * Takes parsed scheduler jobs as data; performs no I/O. Returns findings shaped
+ * `{id, name, code, message}`, empty when every job's envelope is sound.
+ */
+export function envelopeFindings(jobs) {
+  const findings = [];
+  for (const job of jobs) {
+    if (job === null || typeof job !== 'object' || job.no_agent === true) continue;
+    const scripts = embeddedScripts(job.prompt);
+    if (scripts.length === 0) continue;
+    findings.push({
+      id: job.id,
+      name: job.name,
+      code: 'envelope_mismatch',
+      message: `job "${job.name}" runs an agent turn that shells out to ${scripts.join(', ')} — expensive work inside the turn, where an idle limit kills it; declare the "script" envelope so it runs outside the turn`,
+    });
+  }
+  return findings;
+}
+
+/**
+ * Probes the harnesses orch depends on, taking reachability as an injected predicate so the
+ * suite stays hermetic. An unreachable harness is `layer_down` — a broken layer, which must
+ * be fixed before any recipe failure it causes is worth reading.
+ */
+export function harnessFindings(layers, reachable) {
+  return layers
+    .filter((layer) => !reachable(layer))
+    .map((layer) => ({
+      name: layer,
+      code: 'layer_down',
+      message: `harness "${layer}" is not reachable on PATH — this is a broken layer, not a broken recipe`,
+    }));
 }
 
 /**
@@ -264,6 +524,199 @@ export function parseSetFlags(args) {
   return { flag, rest };
 }
 
+const SCHEDULE_FLAGS = {
+  '--envelope': 'envelope',
+  '--script': 'script',
+  '--monitor-script': 'monitorScript',
+  '--deliver': 'deliver',
+  '--workdir': 'workdir',
+};
+
+/**
+ * Splits `orch schedule`'s arguments into named flags and the positional rest (the cron
+ * expression). Throws `bad_input` for an unknown flag or a flag with no value, so a typo is
+ * refused before any job exists rather than silently registering a job that ignores it.
+ */
+export function parseScheduleFlags(args) {
+  const flags = {};
+  const rest = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg.startsWith('--')) {
+      rest.push(arg);
+      continue;
+    }
+    const key = SCHEDULE_FLAGS[arg];
+    if (!key) fail('bad_input', `unknown flag "${arg}" for orch schedule`);
+    const value = args[i + 1];
+    if (value === undefined || value.startsWith('--')) fail('bad_input', `${arg} requires a value`);
+    flags[key] = value;
+    i += 1;
+  }
+  return { flags, rest };
+}
+
+// ── status ────────────────────────────────────────────────────────────────────
+
+/**
+ * Renders a timestamp from either source as `YYYY-MM-DD HH:MM` with whatever zone that source
+ * recorded. The audit log writes UTC and hermes writes a local offset, and truncating the zone
+ * away would put two different clocks in one table looking like one. Fractional seconds are
+ * dropped on purpose — they are noise at this resolution, and hermes writes six of them.
+ */
+export function shortTs(ts) {
+  if (typeof ts !== 'string') return '—';
+  const parts = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(ts);
+  if (!parts) return '—';
+  const zone = ts.endsWith('Z') ? 'Z' : (/[+-]\d{2}:\d{2}$/.exec(ts)?.[0] ?? '');
+  return `${parts[1]} ${parts[2]}${zone}`;
+}
+
+/**
+ * The runs that are not yet closed, newest first.
+ *
+ * A Run is closed by a passing Verify line and by nothing else (ADR 0002): every step exiting
+ * zero is a different claim. So "open" is the honest answer to "what is in flight" — it
+ * includes both a run still going and one that has already died, and the `state` column is
+ * what tells them apart. A run with no recorded exit code died before it could be recorded.
+ */
+export function openRuns(entries) {
+  const byRun = new Map();
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== 'object' || typeof entry.run !== 'string') continue;
+    if (!byRun.has(entry.run)) byRun.set(entry.run, { run: entry.run, recipe: entry.recipe, lines: [] });
+    byRun.get(entry.run).lines.push(entry);
+  }
+  const open = [];
+  for (const { run, recipe, lines } of byRun.values()) {
+    if (lines.some((line) => line.step === VERIFY_STEP_ID && line.exit === 0)) continue;
+    const steps = lines.filter((line) => line.step !== VERIFY_STEP_ID);
+    const last = lines[lines.length - 1];
+    open.push({
+      run,
+      recipe: typeof recipe === 'string' ? recipe : '—',
+      started: lines[0].ts,
+      steps: steps.length,
+      exit: last.exit,
+      // A check that ran and failed is a different fact from a step that failed, and from a run
+      // nothing has checked yet. Folding them together is the ambiguity this table exists to end.
+      state: last.exit === 0 ? 'unverified' : last.step === VERIFY_STEP_ID ? 'verify failed' : 'failed',
+    });
+  }
+  return open.sort((a, b) => Date.parse(b.started) - Date.parse(a.started));
+}
+
+/**
+ * The scheduler's jobs as table rows, soonest next run first: the owner's question is what is
+ * about to happen, and `hermes cron` lists them in creation order.
+ *
+ * The `state` shown is hermes's own, verbatim — a terminal `completed` or `error` record stays
+ * what it is, and orch does not re-derive it (ADR 0001). Collapsing a finished one-shot into
+ * "paused" is the confusion hermes's own `effective_job_state` exists to prevent: a paused job
+ * is waiting to be resumed, a completed one never runs again.
+ */
+export function jobRows(jobs) {
+  const nextAt = (job) => (job.enabled === false ? null : (job.next_run_at ?? null));
+  const when = (job) => {
+    const at = nextAt(job);
+    const parsed = Date.parse(at);
+    return at === null || Number.isNaN(parsed) ? null : parsed;
+  };
+  return jobs
+    .filter((job) => job !== null && typeof job === 'object')
+    .sort((a, b) => {
+      // Compared as instants, not as strings: hermes writes a local offset, and two offsets
+      // in one store would make a lexical sort quietly disagree with the clock.
+      const [x, y] = [when(a), when(b)];
+      if (x === null) return y === null ? 0 : 1;
+      if (y === null) return -1;
+      return x - y;
+    })
+    .map((job) => ({
+      job: typeof job.name === 'string' ? job.name : '—',
+      schedule: typeof job.schedule_display === 'string' ? job.schedule_display : '—',
+      next: job.enabled === false ? '—' : (job.next_run_at ?? '—'),
+      last: job.last_run_at,
+      result: job.last_status ?? '—',
+      state: job.state ?? (job.enabled === false ? 'paused' : 'scheduled'),
+    }));
+}
+
+/**
+ * Renders fixed-width columns. Numeric columns are right-aligned so their right edge is
+ * straight whatever the digit count — a column of numbers that does not line up is a column
+ * the eye cannot compare.
+ */
+export function renderTable(columns, rows) {
+  const cells = rows.map((row) => columns.map((col) => String(row[col.key] ?? '—')));
+  const widths = columns.map((col, i) =>
+    Math.max(col.label.length, ...cells.map((row) => row[i].length)),
+  );
+  const render = (row) =>
+    columns
+      .map((col, i) => (col.align === 'right' ? row[i].padStart(widths[i]) : row[i].padEnd(widths[i])))
+      .join('  ')
+      .trimEnd();
+  return [render(columns.map((col) => col.label)), ...cells.map(render)].join('\n');
+}
+
+const RUN_COLUMNS = [
+  { label: 'RUN', key: 'run' },
+  { label: 'RECIPE', key: 'recipe' },
+  { label: 'STARTED', key: 'started' },
+  { label: 'STEPS', key: 'steps', align: 'right' },
+  { label: 'EXIT', key: 'exit', align: 'right' },
+  { label: 'STATE', key: 'state' },
+];
+
+const JOB_COLUMNS = [
+  { label: 'JOB', key: 'job' },
+  { label: 'SCHEDULE', key: 'schedule' },
+  { label: 'NEXT RUN', key: 'next' },
+  { label: 'LAST RUN', key: 'last' },
+  { label: 'RESULT', key: 'result' },
+  { label: 'STATE', key: 'state' },
+];
+
+const indent = (block) =>
+  block
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n');
+
+/**
+ * The whole `orch status` report, built from data and errors handed in — so the degradation the
+ * ticket asks for is testable without a broken machine: a source that could not be read costs
+ * its own section, never the command.
+ */
+export function renderStatus({ runs, runsError, jobs, jobsError, insights, insightsError, withInsights = false }) {
+  const open = runs ?? [];
+  const jobCount = jobs?.length ?? 0;
+  const lines = [
+    `orch status — ${runsError ? '?' : open.length} open run(s), ${jobsError ? '?' : jobCount} scheduled job(s)`,
+    '',
+    'OPEN RUNS — from the audit log; a run closes when its Verify passes',
+  ];
+  if (runsError) lines.push(`  ✗ unavailable — ${runsError}`);
+  else if (open.length === 0) lines.push('  ✓ none open');
+  else lines.push(indent(renderTable(RUN_COLUMNS, open.map((run) => ({ ...run, started: shortTs(run.started) })))));
+
+  lines.push('', 'SCHEDULED JOBS — from hermes cron');
+  if (jobsError) lines.push(`  ✗ unavailable — ${jobsError}`);
+  else if (jobCount === 0) lines.push('  ✓ none scheduled');
+  else
+    lines.push(
+      indent(renderTable(JOB_COLUMNS, jobs.map((job) => ({ ...job, next: shortTs(job.next), last: shortTs(job.last) })))),
+    );
+
+  if (withInsights) {
+    lines.push('', 'COST — from hermes insights; orch computes no metrics of its own');
+    if (insightsError) lines.push(`  ✗ unavailable — ${insightsError}`);
+    else lines.push(indent(insights ?? ''));
+  }
+  return lines.join('\n');
+}
+
 // ── audit ─────────────────────────────────────────────────────────────────────
 
 /** One JSON line (no trailing newline) recording a single step's outcome. */
@@ -337,7 +790,7 @@ async function execOrFailure(exec, command) {
   try {
     return await exec(command);
   } catch (err) {
-    return { code: null, stdout: '', stderr: err instanceof Error ? err.message : String(err) };
+    return { code: null, stdout: '', stderr: message(err) };
   }
 }
 
@@ -352,25 +805,76 @@ export async function runVerify(recipe, { exec }) {
 
 // ── real exec ─────────────────────────────────────────────────────────────────
 
-function realExec(command) {
+/**
+ * The real exec — the single impure boundary. `timeout` bounds a command that may not return,
+ * which is the only reason `status` does not hang on a third-party CLI.
+ */
+function realExec(command, { timeout } = {}) {
   const [cmd, ...rest] = command;
-  const proc = spawnSync(cmd, rest, { encoding: 'utf8' });
+  const proc = spawnSync(cmd, rest, timeout === undefined ? { encoding: 'utf8' } : { encoding: 'utf8', timeout });
   if (proc.error) fail('io_error', proc.error.message);
   return { code: proc.status ?? 1, stdout: proc.stdout ?? '', stderr: proc.stderr ?? '' };
+}
+
+// ── the scheduler, as data ────────────────────────────────────────────────────
+
+/**
+ * Reads the scheduler's job store as parsed jobs. A machine with no scheduler state simply
+ * has no jobs — that is not an error — but a store that exists and cannot be read is one,
+ * since silently reporting "no findings" over an unreadable store is the blindness this tool
+ * exists to remove.
+ */
+function readCronJobs() {
+  if (!existsSync(CRON_JOBS_FILE)) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(CRON_JOBS_FILE, 'utf8'));
+  } catch (err) {
+    fail('io_error', `${CRON_JOBS_FILE} could not be read: ${err.message}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.jobs)) {
+    fail('io_error', `${CRON_JOBS_FILE} does not carry a "jobs" array`);
+  }
+  return parsed.jobs;
+}
+
+// ── layer reachability ───────────────────────────────────────────────────────
+
+/** Whether a harness binary is reachable on PATH. Injected as a predicate into doctor's check. */
+function hasBinary(name) {
+  const proc = spawnSync('which', [name], { encoding: 'utf8' });
+  return proc.status === 0;
 }
 
 // ── loading a recipe file ────────────────────────────────────────────────────
 
 function loadRecipeFile(name) {
-  const path = join(RECIPES_DIR, `${name}.json`);
+  return loadRecipe(loadRecipeObject(name));
+}
+
+/** Reads a recipe file as plain JSON, before validation — `schedule` rewrites it back. */
+function loadRecipeObject(name) {
+  const path = recipePath(name);
   if (!existsSync(path)) fail('bad_input', `no recipe named "${name}" at ${path}`);
-  let obj;
   try {
-    obj = JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.parse(readFileSync(path, 'utf8'));
   } catch (err) {
     fail('bad_input', `recipe "${name}" is not valid JSON: ${err.message}`);
   }
-  return loadRecipe(obj);
+}
+
+function recipePath(name) {
+  return join(RECIPES_DIR, `${name}.json`);
+}
+
+/**
+ * Records a registered schedule in the recipe itself, so the versioned config stays the one
+ * source of truth for what a recipe does and when it runs. Written only after the scheduler
+ * has accepted the job — a recipe never claims a schedule that does not exist.
+ */
+function writeSchedule(name, schedule) {
+  const obj = { ...loadRecipeObject(name), schedule };
+  writeFileSync(recipePath(name), `${JSON.stringify(obj, null, 2)}\n`);
 }
 
 // ── loading the roster and machine-local config ─────────────────────────────
@@ -435,7 +939,7 @@ async function cmdVerify(runId) {
   const recipeName = findRunRecipe(entries, runId);
   const recipe = loadRecipeFile(recipeName);
   const result = await runVerify(recipe, { exec: realExec });
-  const line = auditLine(runId, recipeName, { id: 'verify', command: recipe.verify.command }, { code: result.exit });
+  const line = auditLine(runId, recipeName, { id: VERIFY_STEP_ID, command: recipe.verify.command }, { code: result.exit });
   appendAudit([line]);
   if (!result.ok) {
     fail('verify_failed', `verify failed for run "${runId}" (recipe "${recipeName}") — exit ${result.exit}`);
@@ -443,7 +947,135 @@ async function cmdVerify(runId) {
   say(`✓ verify passed — run ${runId} — recipe "${recipeName}"`);
 }
 
-const commands = { run: cmdRun, verify: cmdVerify };
+const SCHEDULE_USAGE = `usage: orch schedule <recipe> <cron> --envelope script|monitor|agent [--script <name>] [--monitor-script <name>] [--deliver <target>] [--workdir <path>]`;
+
+/**
+ * Registers a recipe on a cron schedule through `hermes cron`. The schedule is validated
+ * before the scheduler is touched at all, so a mismatch never becomes a job; the recipe is
+ * only told it is scheduled once the scheduler has accepted it.
+ */
+async function cmdSchedule(name, ...rawArgs) {
+  if (!name) fail('bad_input', SCHEDULE_USAGE);
+  const { flags, rest } = parseScheduleFlags(rawArgs);
+  if (rest.length !== 1) fail('bad_input', SCHEDULE_USAGE);
+
+  const base = loadRecipeObject(name);
+  const declared = loadSchedule({
+    cron: rest[0],
+    envelope: flags.envelope,
+    script: flags.script,
+    monitorScript: flags.monitorScript,
+    workdir: flags.workdir,
+  });
+  // Where a job delivers is a machine fact, so it comes from the flag or from config.json and
+  // is never written into the versioned recipe — the repo holds behaviour, the machine holds
+  // destinations. A flag wins for the same reason --set beats config.
+  const deliver = flags.deliver ?? loadConfigFile().delivery ?? undefined;
+
+  const recipe = loadRecipe({ ...base, schedule: declared });
+  const jobName = scheduledJobName(recipe.name);
+  const existing = readCronJobs().find((job) => job.name === jobName);
+  if (existing) {
+    fail(
+      'bad_input',
+      `job "${jobName}" already exists (${existing.id}) — remove it with "hermes cron remove ${existing.id}" before re-scheduling, so a stale job cannot linger beside the new one`,
+    );
+  }
+
+  const result = await execOrFailure(realExec, cronArgs(recipe, { deliver }));
+  if (result.code !== 0) {
+    if (result.code === null) fail('layer_down', `could not run hermes — ${result.stderr.trim() || 'not on PATH'}`);
+    fail('bad_input', `hermes refused the schedule: ${(result.stderr || result.stdout).trim() || `exit ${result.code}`}`);
+  }
+  writeSchedule(name, declared);
+  say(`✓ scheduled ${name} — job "${jobName}" — ${declared.cron} — envelope ${declared.envelope}`);
+}
+
+/**
+ * Reports two different kinds of brokenness, kept visibly apart because the fix differs: a
+ * harness that cannot be reached is a broken layer, and a scheduled job that puts expensive
+ * work inside its agent turn is a broken recipe. A layer wins the exit code, because a recipe
+ * failure read while a layer is down is a misdiagnosis.
+ */
+async function cmdDoctor() {
+  const layerFindings = harnessFindings(LAYERS, hasBinary);
+  const jobs = readCronJobs();
+  const jobFindings = envelopeFindings(jobs);
+  const down = new Set(layerFindings.map((finding) => finding.name));
+
+  say(`orch doctor — ${LAYERS.length} layer(s), ${jobs.length} scheduled job(s)`);
+  say('');
+  say('layers — harnesses orch dispatches to');
+  for (const layer of LAYERS) {
+    say(`  ${down.has(layer) ? '✗' : '✓'} ${layer}${down.has(layer) ? ' — unreachable' : ''}`);
+  }
+  say('');
+  say('scheduled jobs — envelopes found in the scheduler');
+  if (jobFindings.length === 0) say('  ✓ no envelope findings');
+  for (const finding of jobFindings) {
+    say(`  ✗ ${finding.name} (${finding.id})`);
+    say(`      ${finding.code} — ${finding.message}`);
+  }
+  say('');
+  say(`${layerFindings.length + jobFindings.length} finding(s) — ${layerFindings.length} layer, ${jobFindings.length} recipe`);
+
+  if (layerFindings.length > 0) {
+    fail('layer_down', `layer(s) down: ${layerFindings.map((f) => f.name).join(', ')} — fix the layer before reading any recipe failure`);
+  }
+  if (jobFindings.length > 0) {
+    fail('envelope_mismatch', `${jobFindings.length} scheduled job(s) place expensive work inside an agent turn — see the findings above`);
+  }
+  say('✓ no findings');
+}
+
+/**
+ * Reports what is in flight and what is scheduled. Read-only by construction: it writes no
+ * file, creates no directory, and never touches the scheduler. Each of its three sources is
+ * read behind its own guard, so one unavailable source costs its own section rather than the
+ * command — a status that refuses to answer because a third tool is slow would be useless
+ * exactly when it is needed.
+ */
+async function cmdStatus(...rawArgs) {
+  const unknown = rawArgs.filter((arg) => arg !== '--insights');
+  if (unknown.length > 0) fail('bad_input', `unknown flag "${unknown[0]}" for orch status — try --help`);
+  const withInsights = rawArgs.includes('--insights');
+
+  let runs;
+  let runsError;
+  try {
+    runs = openRuns(readAuditEntries());
+  } catch (err) {
+    runsError = message(err);
+  }
+
+  let jobs;
+  let jobsError;
+  try {
+    jobs = jobRows(readCronJobs());
+  } catch (err) {
+    jobsError = message(err);
+  }
+
+  let insights;
+  let insightsError;
+  if (withInsights) {
+    const result = await execOrFailure((command) => realExec(command, { timeout: INSIGHTS_TIMEOUT_MS }), [
+      'hermes',
+      'insights',
+    ]);
+    if (result.code === 0) {
+      // Leading newlines dropped (not trimmed — the report's first line is centred with real
+      // leading spaces), trailing whitespace dropped.
+      insights = String(result.stdout).replace(/^\n+/, '').trimEnd();
+    } else {
+      insightsError = `hermes insights did not answer — ${String(result.stderr).trim() || `exit ${result.code}`}`;
+    }
+  }
+
+  say(renderStatus({ runs, runsError, jobs, jobsError, insights, insightsError, withInsights }));
+}
+
+const commands = { run: cmdRun, verify: cmdVerify, schedule: cmdSchedule, doctor: cmdDoctor, status: cmdStatus };
 
 const USAGE = `orch — a validated recipe runner
 
@@ -452,8 +1084,19 @@ const USAGE = `orch — a validated recipe runner
                                                   step's settings for this run only
   verify <run-id>                                run a completed run's declared check
                                                   on its own
+  schedule <recipe> <cron> --envelope <envelope> register the recipe on a cron schedule;
+                    [--script <name>]             envelope is script | monitor | agent,
+                    [--monitor-script <name>]     and decides where the expensive work runs
+                    [--deliver <target>]
+                    [--workdir <path>]
+  doctor                                         probe each harness orch depends on, and
+                                                  audit existing scheduled jobs for the
+                                                  envelope defect
+  status [--insights]                            show open runs beside scheduled jobs;
+                                                  --insights adds the operating cost, read
+                                                  from hermes insights rather than computed
 
-More commands (new, status, schedule, doctor) land in later tickets.`;
+More commands (new) land in later tickets.`;
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
