@@ -1,0 +1,53 @@
+{
+  "name": "deck-build",
+  "steps": [
+    {
+      "id": "sanitise",
+      "command": [
+        "node",
+        "/Users/flp9damarpramuditya/.agent-tools/rps-deck/deck.mjs",
+        "sanitise",
+        "{2}",
+        "{3}",
+        "{4}"
+      ]
+    },
+    {
+      "id": "naskah-check",
+      "command": [
+        "node",
+        "/Users/flp9damarpramuditya/.agent-tools/rps-deck/deck.mjs",
+        "check",
+        "{1}"
+      ]
+    },
+    {
+      "id": "build-decks",
+      "command": [
+        "node",
+        "/Users/flp9damarpramuditya/.agent-tools/rps-deck/deck.mjs",
+        "build",
+        "--final",
+        "{1}"
+      ]
+    },
+    {
+      "id": "render-materi",
+      "command": [
+        "node",
+        "/Users/flp9damarpramuditya/.agent-tools/rps-deck/deck.mjs",
+        "render",
+        "{1}"
+      ]
+    }
+  ],
+  "verify": {
+    "command": [
+      "node",
+      "/Users/flp9damarpramuditya/.agent-tools/rps-deck/deck.mjs",
+      "build",
+      "--final",
+      "{1}"
+    ]
+  }
+}

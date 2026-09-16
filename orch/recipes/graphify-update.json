@@ -1,0 +1,26 @@
+{
+  "name": "graphify-update",
+  "steps": [
+    {
+      "id": "graph-refreshed",
+      "command": [
+        "python3",
+        "-c",
+        "import json,pathlib,sys; m=pathlib.Path.home()/'Documents'/'Obsidian Vault'/'graphify-out'/'refresh.json'; d=json.loads(m.read_text()) if m.exists() else {}; sys.exit(0 if d.get('graph_sha256') and d.get('nodes') else 1)"
+      ]
+    }
+  ],
+  "verify": {
+    "command": [
+      "python3",
+      "-c",
+      "import datetime, hashlib, json, pathlib, sys\nout = pathlib.Path.home() / 'Documents' / 'Obsidian Vault' / 'graphify-out'\nmarker, graph = out / 'refresh.json', out / 'graph.json'\nif not marker.exists():\n    print('no refresh marker - the graph has not been refreshed', file=sys.stderr); sys.exit(1)\ntry:\n    rec = json.loads(marker.read_text())\nexcept Exception as exc:\n    print(f'refresh marker unreadable: {exc}', file=sys.stderr); sys.exit(1)\nif not graph.exists():\n    print('graph.json is missing', file=sys.stderr); sys.exit(1)\nraw = graph.read_bytes()\nwant = rec.get('graph_sha256')\nif not want or hashlib.sha256(raw).hexdigest() != want:\n    print('graph.json is not the artifact the last refresh produced (stale or replaced)', file=sys.stderr); sys.exit(1)\ndata = json.loads(raw)\nif not data.get('nodes'):\n    print('graph.json contains no nodes', file=sys.stderr); sys.exit(1)\ntry:\n    stamp = datetime.datetime.fromisoformat(rec['refreshed_at'])\nexcept Exception:\n    print('refresh marker has no usable refreshed_at', file=sys.stderr); sys.exit(1)\nwib = datetime.timezone(datetime.timedelta(hours=7))\ntoday = datetime.datetime.now(wib).strftime('%Y-%m-%d')\nif stamp.astimezone(wib).strftime('%Y-%m-%d') != today:\n    print(f\"last refresh {rec['refreshed_at']} is not today ({today} WIB) - graph is stale\", file=sys.stderr); sys.exit(1)\nprint(f\"graph refreshed {rec['refreshed_at']} - {len(data['nodes'])} nodes - hash matches\")"
+    ]
+  },
+  "schedule": {
+    "cron": "0 23 * * *",
+    "envelope": "script",
+    "script": "vault-graphify-update.sh",
+    "workdir": "/Users/flp9damarpramuditya/Documents/Obsidian Vault"
+  }
+}

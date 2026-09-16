@@ -719,16 +719,23 @@ export function renderStatus({ runs, runsError, jobs, jobsError, insights, insig
 
 // ── audit ─────────────────────────────────────────────────────────────────────
 
-/** One JSON line (no trailing newline) recording a single step's outcome. */
-export function auditLine(runId, recipeName, step, result, ts = new Date().toISOString()) {
-  return JSON.stringify({
+/**
+ * One JSON line (no trailing newline) recording a single step's outcome. `args` — the run's
+ * positional args — is included only when given, so a run can be recovered well enough for
+ * `orch verify` to re-substitute `{n}` into `verify.command` (see `findRunArgs`) without
+ * every historical audit line needing the field.
+ */
+export function auditLine(runId, recipeName, step, result, ts = new Date().toISOString(), args = undefined) {
+  const line = {
     ts,
     run: runId,
     recipe: recipeName,
     step: step.id,
     cmd: step.command,
     exit: result.code,
-  });
+  };
+  if (args !== undefined) line.args = args;
+  return JSON.stringify(line);
 }
 
 function appendAudit(lines) {
@@ -742,6 +749,19 @@ export function findRunRecipe(entries, runId) {
   const entry = entries.find((e) => e.run === runId);
   if (!entry) fail('bad_input', `no audit entries for run "${runId}"`);
   return entry.recipe;
+}
+
+/**
+ * Recovers the positional args a run was invoked with, from parsed audit entries — the same
+ * way `findRunRecipe` recovers the recipe name, so `orch verify` can re-substitute `{n}` into
+ * `verify.command` for a recipe whose check is itself parameterized (e.g. "is *this* naskah
+ * approved"). Empty array for a run predating this field, or invoked with no args. Throws
+ * `bad_input` if no entry matches the run id.
+ */
+export function findRunArgs(entries, runId) {
+  const entry = entries.find((e) => e.run === runId);
+  if (!entry) fail('bad_input', `no audit entries for run "${runId}"`);
+  return entry.args ?? [];
 }
 
 function readAuditEntries() {
@@ -770,7 +790,7 @@ export async function runRecipe(
   const lines = [];
   for (const step of steps) {
     const result = await execOrFailure(exec, step.command);
-    lines.push(auditLine(runId, recipe.name, step, result, now()));
+    lines.push(auditLine(runId, recipe.name, step, result, now(), args));
     if (result.code !== 0) {
       return { runId, ok: false, lines };
     }
@@ -795,12 +815,18 @@ async function execOrFailure(exec, command) {
 }
 
 /**
- * Runs a recipe's declared Verify via the injected `exec`. Reports success or failure —
- * including a check that could not even be spawned — without throwing.
+ * Runs a recipe's declared Verify via the injected `exec`. `args` re-substitutes `{n}` into
+ * `verify.command` exactly as `planSteps` does for a step — a Verify checking "is *this*
+ * naskah approved" needs to know which naskah, and the run's own args are the only source of
+ * that once the run is over (see `findRunArgs`). Reports success or failure — including a
+ * check that could not even be spawned, or a `{n}` this run's args can't resolve — without
+ * throwing on the exec, though an unresolved placeholder still throws `bad_input` (there is
+ * nothing to execute yet, so that failure is not a `runVerify` result to report).
  */
-export async function runVerify(recipe, { exec }) {
-  const result = await execOrFailure(exec, recipe.verify.command);
-  return { ok: result.code === 0, exit: result.code, stdout: result.stdout, stderr: result.stderr };
+export async function runVerify(recipe, args, { exec }) {
+  const command = recipe.verify.command.map((token) => substitute(token, args, {}, recipe.name, VERIFY_STEP_ID));
+  const result = await execOrFailure(exec, command);
+  return { ok: result.code === 0, exit: result.code, stdout: result.stdout, stderr: result.stderr, command };
 }
 
 // ── real exec ─────────────────────────────────────────────────────────────────
@@ -937,9 +963,10 @@ async function cmdVerify(runId) {
   if (!runId) fail('bad_input', 'usage: orch verify <run-id>');
   const entries = readAuditEntries();
   const recipeName = findRunRecipe(entries, runId);
+  const args = findRunArgs(entries, runId);
   const recipe = loadRecipeFile(recipeName);
-  const result = await runVerify(recipe, { exec: realExec });
-  const line = auditLine(runId, recipeName, { id: VERIFY_STEP_ID, command: recipe.verify.command }, { code: result.exit });
+  const result = await runVerify(recipe, args, { exec: realExec });
+  const line = auditLine(runId, recipeName, { id: VERIFY_STEP_ID, command: result.command }, { code: result.exit });
   appendAudit([line]);
   if (!result.ok) {
     fail('verify_failed', `verify failed for run "${runId}" (recipe "${recipeName}") — exit ${result.exit}`);

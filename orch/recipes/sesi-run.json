@@ -1,0 +1,10 @@
+{
+  "name": "sesi-run",
+  "steps": [
+    { "id": "brief", "command": ["rise-ops", "brief", "{1}", "--sesi", "{2}"] },
+    { "id": "attendance", "command": ["rise-ops", "attendance", "zoom", "{1}", "{2}", "{3}"] },
+    { "id": "berita-acara", "command": ["rise-ops", "acara", "{1}", "{2}"] },
+    { "id": "session-close", "command": ["rise-ops", "session", "end", "{1}", "{2}"] }
+  ],
+  "verify": { "command": ["rise-ops", "todo"] }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "combo-benchmark",
+  "steps": [
+    {
+      "id": "report-readable",
+      "command": [
+        "python3",
+        "-c",
+        "import json,pathlib,sys; d=json.loads((pathlib.Path.home()/'.hermes/cron/output/combo-benchmark-latest.json').read_text()); sys.exit(0 if d.get('generated_wib') else 1)"
+      ]
+    }
+  ],
+  "verify": {
+    "command": [
+      "python3",
+      "-c",
+      "import datetime,json,pathlib,sys; d=json.loads((pathlib.Path.home()/'.hermes/cron/output/combo-benchmark-latest.json').read_text()); w=datetime.timezone(datetime.timedelta(hours=7)); sys.exit(0 if str(d.get('generated_wib','')).startswith(datetime.datetime.now(w).strftime('%Y-%m-%d')) else 1)"
+    ]
+  },
+  "schedule": {
+    "cron": "0 7 * * *",
+    "envelope": "script",
+    "script": "combo-benchmark.py",
+    "workdir": "/Users/flp9damarpramuditya/Documents/Obsidian Vault"
+  }
+}

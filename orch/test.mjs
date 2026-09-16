@@ -12,6 +12,7 @@ import {
   runVerify,
   auditLine,
   findRunRecipe,
+  findRunArgs,
   loadAgents,
   findAgent,
   loadOrchConfig,
@@ -771,7 +772,7 @@ await testAsync('runVerify reports a thrown exec as a failed check, not an excep
   const throwingExec = () => {
     throw new Error('spawnSync test ENOENT');
   };
-  const result = await runVerify(recipe, { exec: throwingExec });
+  const result = await runVerify(recipe, [], { exec: throwingExec });
   assert.equal(result.ok, false);
   assert.equal(result.exit, null);
   assert.match(result.stderr, /ENOENT/);
@@ -798,12 +799,19 @@ test('auditLine defaults ts to an ISO string when omitted', () => {
   assert.match(parsed.ts, /^\d{4}-\d{2}-\d{2}T/);
 });
 
+test('auditLine includes args only when given', () => {
+  const withArgs = JSON.parse(auditLine('run-9', 'smoke-test', { id: 'one', command: ['echo'] }, { code: 0 }, 't0', ['a', 'b']));
+  assert.deepEqual(withArgs.args, ['a', 'b']);
+  const withoutArgs = JSON.parse(auditLine('run-9', 'smoke-test', { id: 'one', command: ['echo'] }, { code: 0 }, 't0'));
+  assert.equal('args' in withoutArgs, false);
+});
+
 // ── runVerify ─────────────────────────────────────────────────────────────────
 
 await testAsync('runVerify runs the declared check and reports success', async () => {
   const recipe = loadRecipe(VALID);
   const exec = fakeExec();
-  const result = await runVerify(recipe, { exec });
+  const result = await runVerify(recipe, [], { exec });
   assert.equal(result.ok, true);
   assert.deepEqual(exec.calls, [['test', '-f', '/tmp/orch-smoke']]);
 });
@@ -811,12 +819,40 @@ await testAsync('runVerify runs the declared check and reports success', async (
 await testAsync('runVerify reports failure without throwing', async () => {
   const recipe = loadRecipe(VALID);
   const exec = fakeExec({ 'test -f /tmp/orch-smoke': { code: 1, stdout: '', stderr: '' } });
-  const result = await runVerify(recipe, { exec });
+  const result = await runVerify(recipe, [], { exec });
   assert.equal(result.ok, false);
   assert.equal(result.exit, 1);
 });
 
-// ── findRunRecipe ─────────────────────────────────────────────────────────────
+await testAsync("runVerify substitutes {n} into verify.command from the run's own args", async () => {
+  // Regression: a Verify checking "is *this* naskah approved" needs to know which naskah.
+  // Before this, verify.command was executed completely raw, so a recipe like deck-build's
+  // (`["node", "deck.mjs", "build", "--final", "{1}"]`) failed for every naskah, forever.
+  const recipe = loadRecipe({
+    name: 'deck-build',
+    steps: [{ id: 'build', command: ['node', 'deck.mjs', 'build', '{1}'] }],
+    verify: { command: ['node', 'deck.mjs', 'build', '--final', '{1}'] },
+  });
+  const exec = fakeExec();
+  const result = await runVerify(recipe, ['/vault/Sesi 02 - Naskah.md'], { exec });
+  assert.equal(result.ok, true);
+  assert.deepEqual(exec.calls, [['node', 'deck.mjs', 'build', '--final', '/vault/Sesi 02 - Naskah.md']]);
+  assert.deepEqual(result.command, ['node', 'deck.mjs', 'build', '--final', '/vault/Sesi 02 - Naskah.md']);
+});
+
+await testAsync('runVerify throws bad_input when verify.command references a {n} the run has no arg for', async () => {
+  const recipe = loadRecipe({
+    name: 'deck-build',
+    steps: [{ id: 'build', command: ['echo', 'ok'] }],
+    verify: { command: ['node', 'deck.mjs', 'build', '--final', '{1}'] },
+  });
+  await assert.rejects(
+    () => runVerify(recipe, [], { exec: fakeExec() }),
+    (err) => err instanceof OrchError && err.code === 'bad_input',
+  );
+});
+
+// ── findRunRecipe / findRunArgs ────────────────────────────────────────────────
 
 test('findRunRecipe recovers the recipe name for a run id from audit entries', () => {
   const entries = [
@@ -830,6 +866,23 @@ test('findRunRecipe recovers the recipe name for a run id from audit entries', (
 
 test('findRunRecipe throws bad_input for an unknown run id', () => {
   assert.throws(() => findRunRecipe([], 'ghost'), (err) => err instanceof OrchError && err.code === 'bad_input');
+});
+
+test('findRunArgs recovers the args a run was invoked with', () => {
+  const entries = [
+    { ts: 't0', run: 'run-1', recipe: 'deck-build', step: 'build', cmd: ['node'], exit: 0, args: ['/vault/x.md'] },
+    { ts: 't1', run: 'run-1', recipe: 'deck-build', step: 'render', cmd: ['node'], exit: 0, args: ['/vault/x.md'] },
+  ];
+  assert.deepEqual(findRunArgs(entries, 'run-1'), ['/vault/x.md']);
+});
+
+test('findRunArgs defaults to an empty array for a run recorded with no args field', () => {
+  const entries = [{ ts: 't0', run: 'run-1', recipe: 'smoke-test', step: 'one', cmd: ['echo'], exit: 0 }];
+  assert.deepEqual(findRunArgs(entries, 'run-1'), []);
+});
+
+test('findRunArgs throws bad_input for an unknown run id', () => {
+  assert.throws(() => findRunArgs([], 'ghost'), (err) => err instanceof OrchError && err.code === 'bad_input');
 });
 
 // ── envelopeFindings ──────────────────────────────────────────────────────────
