@@ -9,6 +9,7 @@ all of them is waste; reading none of them is how an avoided term ends up in a c
 
 | Context | What it does | Docs |
 | :--- | :--- | :--- |
+| [`orch/`](orch/CONTEXT.md) | Runs a named, linear recipe over the other tools in this repo, refusing to run one with no declared check; appends every step to an audit log | `CONTEXT.md`, `CONTRACT.md`, `docs/adr/` |
 | [`learn/`](learn/CONTEXT.md) | Teaching one person a hierarchically-structured subject, keeping honest records of what they have actually demonstrated | `CONTEXT.md` |
 | [`linkedin-jobs/`](linkedin-jobs/CONTEXT.md) | Reading a LinkedIn job posting honestly, without an account — separating what LinkedIn claims from what is verifiable | `CONTEXT.md` |
 | [`rise-ops/`](rise-ops/CONTEXT.md) | Running and recording a Cakrawala sesi in the RISE portal: attendance, berita acara, session open/close. Never touches SIAKAD | `CONTEXT.md`, `CONTRACT.md`, `docs/adr/` |
@@ -22,6 +23,9 @@ all of them is waste; reading none of them is how an avoided term ends up in a c
   and records. A naskah must be `approved` in `rps-deck` before `rise-ops material` will publish it.
 - **Course-level teaching vocabulary is not in this repo.** It lives at
   `~/Documents/Obsidian Vault/02-Projects/Cakrawala/CONTEXT.md`. Read it before either teaching tool.
+- **`orch` dispatches to every other context in this repo.** It calls `rise-ops`, `rps-deck`,
+  and `graphify` as steps in a recipe rather than reimplementing any of them — read the
+  context it is dispatching to as well as `orch/CONTEXT.md`.
 
 ## House conventions
 
