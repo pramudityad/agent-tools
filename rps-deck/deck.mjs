@@ -507,8 +507,9 @@ body.pane-on #pane{display:block}
   border-bottom:1px dashed var(--rule-2)}
 .notes,.visual{display:none}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-@media print{body{overflow:visible}.slide{position:static;display:block;page-break-after:always;
-  min-height:auto}.hud,#pane,.bar{display:none}}
+@media print{html,body{height:auto;overflow:visible}.deck{position:static}
+  .slide{position:static;display:block;page-break-after:always;
+  min-height:auto;overflow:visible}.hud,#pane,.bar{display:none}}
 `;
 
 const NAV = `

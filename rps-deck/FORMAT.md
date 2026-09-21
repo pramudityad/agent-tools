@@ -95,6 +95,33 @@ The cost of mid-segment markers is a false positive if prose genuinely contains 
 six words followed by a space. None occur in Indonesian teaching prose, but if you hit one,
 brace the real marker or rephrase.
 
+## Lab HOLD — Contoh (delayed example, not a marker)
+
+Every lab that produces an artifact uses `**HOLD**` to keep the task slide on screen.
+After ~5 minutes of pair work, overlay a worked example — never at start. This gives a
+scaffold without spoon-feeding the first attempt and rescues latecomers.
+
+In `**KONTEN**`, after `FINE:` add a plain prose line (not a marker — lowercase `Contoh`):
+
+```md
+FINE:
+- Minimal dua baris: saat ini diputuskan dari intuisi atau spreadsheet
+Contoh NusaPay — tampilkan setelah 5 menit lab, jangan di awal:
+| # | Keputusan | Siapa (peran) | Frekuensi | Data hari ini | Data seharusnya | Tipe | Catatan |
+| :---- | :---- | :---- | :---- | :---- | :---- | :---- |
+| 1 | ... | Head of Ops (shift malam) | Jam-an | Grup WA | `transactions` per `biller_code` | Operasional | Intuisi |
+| 2 | **⭕ DILINGKARI — ...** | Product Ops Lead | Mingguan | Spreadsheet | Agregasi `transactions` JOIN `fulfillments` | Taktis | Akan jadi D1 |
+```
+
+Shape: 5 rows, 1 circled (`⭕ DILINGKARI — ` → next artifact), ≥2 rows intuition/spreadsheet,
+`Siapa` = named role not department. For non-BI labs swap rows only (Sesi 02: 8 questions,
+Sesi 03: 1 fact + 2 dims + grain sentence, Sesi 04-05: 6-rule checklist). In `**NOTES**`
+add: `Setelah 5 menit, proyeksikan Contoh di atas sebagai referensi — jangan di awal.`
+Full per-course instantiations: `references/lab-example-pattern.md`.
+
+Do **not** write `CONTOH` in ALL-CAPS at line start — that trips `unknown marker CONTOH`.
+Write `Contoh —` (capital C only).
+
 ## Gotchas that fail `check`
 
 Each of these has cost a real authoring session.
