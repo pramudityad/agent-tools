@@ -1,0 +1,8 @@
+{
+  "name": "ticket-promote",
+  "steps": [
+    { "id": "kanban-promote", "command": ["hermes", "kanban", "promote", "{1}", "tier-2 gate passed"] },
+    { "id": "mr", "command": ["glab", "mr", "create", "--fill", "--yes", "--target-branch", "{3}"], "cwd": "{2}" }
+  ],
+  "verify": { "command": ["glab", "mr", "view"], "cwd": "{2}" }
+}

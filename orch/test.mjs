@@ -10,9 +10,13 @@ import {
   planSteps,
   runRecipe,
   runVerify,
+  substituteCaptured,
+  capturedValue,
   auditLine,
+  stderrLogPath,
   findRunRecipe,
   findRunArgs,
+  findRunCaptured,
   loadAgents,
   findAgent,
   loadOrchConfig,
@@ -100,6 +104,20 @@ test('loadRecipe rejects an empty verify.command as no_verify', () => {
 test('loadRecipe rejects a missing verify.command as no_verify', () => {
   const recipe = { ...VALID, verify: {} };
   assert.throws(() => loadRecipe(recipe), (err) => err instanceof OrchError && err.code === 'no_verify');
+});
+
+test('loadRecipe preserves an optional verify.cwd', () => {
+  const recipe = { ...VALID, verify: { ...VALID.verify, cwd: '/tmp/wt' } };
+  assert.equal(loadRecipe(recipe).verify.cwd, '/tmp/wt');
+});
+
+test('loadRecipe leaves verify.cwd undefined when not declared', () => {
+  assert.equal(loadRecipe(VALID).verify.cwd, undefined);
+});
+
+test('loadRecipe rejects a non-string verify.cwd as bad_input', () => {
+  const recipe = { ...VALID, verify: { ...VALID.verify, cwd: 42 } };
+  assert.throws(() => loadRecipe(recipe), (err) => err instanceof OrchError && err.code === 'bad_input');
 });
 
 test('loadRecipe rejects a recipe with no steps as bad_input', () => {
@@ -208,6 +226,103 @@ test('planSteps looks up resolved settings per step id, not shared globally', ()
   assert.deepEqual(steps[1].command, ['echo', 'from-b']);
 });
 
+test('planSteps substitutes {n} and named settings inside cwd', () => {
+  const recipe = loadRecipe({
+    name: 'cwd-plan',
+    steps: [{ id: 'one', command: ['echo'], cwd: '/repos/{1}' }],
+    verify: { command: ['true'] },
+  });
+  assert.equal(planSteps(recipe, ['gogogo-service'])[0].cwd, '/repos/gogogo-service');
+});
+
+test('planSteps leaves {captured.*} inside cwd untouched — no step has run yet', () => {
+  const recipe = loadRecipe({
+    name: 'cwd-captured',
+    steps: [
+      { id: 'one', command: ['echo', 'x'], capture: { as: 'wt' } },
+      { id: 'two', command: ['echo'], cwd: '{captured.wt}' },
+    ],
+    verify: { command: ['true'] },
+  });
+  assert.equal(planSteps(recipe, [])[1].cwd, '{captured.wt}');
+});
+
+test('planSteps leaves cwd undefined on a step that declares none', () => {
+  const steps = planSteps(loadRecipe(VALID), []);
+  assert.equal(steps[0].cwd, undefined);
+});
+
+test('planSteps leaves {captured.*} placeholders untouched — no step has run yet', () => {
+  const recipe = loadRecipe({
+    name: 'threaded',
+    steps: [
+      { id: 'one', command: ['echo', 'x'], capture: { as: 'thing' } },
+      { id: 'two', command: ['echo', '{captured.thing}'] },
+    ],
+    verify: { command: ['true'] },
+  });
+  const steps = planSteps(recipe, []);
+  assert.deepEqual(steps[1].command, ['echo', '{captured.thing}']);
+});
+
+// ── substituteCaptured ───────────────────────────────────────────────────────
+
+test('substituteCaptured resolves a captured value', () => {
+  const command = substituteCaptured(['echo', '{captured.path}'], { path: '/tmp/wt' }, 'two');
+  assert.deepEqual(command, ['echo', '/tmp/wt']);
+});
+
+test('substituteCaptured leaves a command with no placeholders untouched', () => {
+  assert.deepEqual(substituteCaptured(['echo', 'plain'], {}, 'one'), ['echo', 'plain']);
+});
+
+test('substituteCaptured throws bad_input for a capture no earlier step produced', () => {
+  assert.throws(
+    () => substituteCaptured(['echo', '{captured.missing}'], {}, 'two'),
+    (err) => err instanceof OrchError && err.code === 'bad_input',
+  );
+});
+
+// ── capturedValue ────────────────────────────────────────────────────────────
+
+test('capturedValue returns undefined when the step declares no capture', () => {
+  assert.equal(capturedValue({ id: 'one' }, { stdout: 'anything', code: 0 }), undefined);
+});
+
+test('capturedValue returns trimmed stdout with no "json" path', () => {
+  const value = capturedValue({ id: 'one', capture: { as: 'thing' } }, { stdout: '  /tmp/wt  \n', code: 0 });
+  assert.equal(value, '/tmp/wt');
+});
+
+test('capturedValue extracts a dotted json path', () => {
+  const stdout = JSON.stringify({ result: { worktree: { path: '/tmp/wt' } } });
+  const value = capturedValue({ id: 'one', capture: { as: 'thing', json: 'result.worktree.path' } }, { stdout, code: 0 });
+  assert.equal(value, '/tmp/wt');
+});
+
+test('capturedValue throws bad_input when stdout is not valid JSON', () => {
+  assert.throws(
+    () => capturedValue({ id: 'one', capture: { as: 'thing', json: 'a.b' } }, { stdout: 'not json', code: 0 }),
+    (err) => err instanceof OrchError && err.code === 'bad_input',
+  );
+});
+
+test('capturedValue throws bad_input when the json path does not resolve to a string', () => {
+  const stdout = JSON.stringify({ a: { b: 42 } });
+  assert.throws(
+    () => capturedValue({ id: 'one', capture: { as: 'thing', json: 'a.b' } }, { stdout, code: 0 }),
+    (err) => err instanceof OrchError && err.code === 'bad_input',
+  );
+});
+
+test('capturedValue throws bad_input when the json path does not exist', () => {
+  const stdout = JSON.stringify({ a: {} });
+  assert.throws(
+    () => capturedValue({ id: 'one', capture: { as: 'thing', json: 'a.b.c' } }, { stdout, code: 0 }),
+    (err) => err instanceof OrchError && err.code === 'bad_input',
+  );
+});
+
 // ── loadRecipe: agent-backed steps ──────────────────────────────────────────
 
 test('loadRecipe preserves an optional agent and settings on a step', () => {
@@ -240,6 +355,65 @@ test('loadRecipe refuses a step id reserved for the declared check', () => {
   // `orch verify` writes its line under the id "verify", and that line is the only thing that
   // closes a run in `orch status` — a step free to write one would close runs it never checked.
   const recipe = { ...VALID, steps: [{ id: 'verify', command: ['echo', 'sneaky'] }] };
+  assert.throws(() => loadRecipe(recipe), (err) => err instanceof OrchError && err.code === 'bad_input');
+});
+
+// ── loadRecipe: capture ─────────────────────────────────────────────────────
+
+test('loadRecipe preserves a capture with just "as"', () => {
+  const recipe = loadRecipe({
+    ...VALID,
+    steps: [{ id: 'one', command: ['echo', 'x'], capture: { as: 'thing' } }, VALID.steps[1], VALID.steps[2]],
+  });
+  assert.deepEqual(recipe.steps[0].capture, { as: 'thing' });
+});
+
+test('loadRecipe preserves a capture with "as" and "json"', () => {
+  const recipe = loadRecipe({
+    ...VALID,
+    steps: [{ id: 'one', command: ['echo', 'x'], capture: { as: 'thing', json: 'a.b' } }, VALID.steps[1], VALID.steps[2]],
+  });
+  assert.deepEqual(recipe.steps[0].capture, { as: 'thing', json: 'a.b' });
+});
+
+test('loadRecipe leaves capture undefined when a step declares none', () => {
+  const recipe = loadRecipe(VALID);
+  assert.equal(recipe.steps[0].capture, undefined);
+});
+
+test('loadRecipe rejects a non-object capture as bad_input', () => {
+  const recipe = { ...VALID, steps: [{ id: 'one', command: ['echo'], capture: 'nope' }] };
+  assert.throws(() => loadRecipe(recipe), (err) => err instanceof OrchError && err.code === 'bad_input');
+});
+
+test('loadRecipe rejects a capture with no "as" as bad_input', () => {
+  const recipe = { ...VALID, steps: [{ id: 'one', command: ['echo'], capture: {} }] };
+  assert.throws(() => loadRecipe(recipe), (err) => err instanceof OrchError && err.code === 'bad_input');
+});
+
+test('loadRecipe rejects a non-string capture.json as bad_input', () => {
+  const recipe = { ...VALID, steps: [{ id: 'one', command: ['echo'], capture: { as: 'x', json: 42 } }] };
+  assert.throws(() => loadRecipe(recipe), (err) => err instanceof OrchError && err.code === 'bad_input');
+});
+
+// ── loadRecipe: cwd ──────────────────────────────────────────────────────────
+
+test('loadRecipe preserves a step\'s cwd', () => {
+  const recipe = { ...VALID, steps: [{ id: 'one', command: ['echo'], cwd: '/tmp/wt' }, VALID.steps[1], VALID.steps[2]] };
+  assert.equal(loadRecipe(recipe).steps[0].cwd, '/tmp/wt');
+});
+
+test('loadRecipe leaves cwd undefined when a step declares none', () => {
+  assert.equal(loadRecipe(VALID).steps[0].cwd, undefined);
+});
+
+test('loadRecipe rejects a non-string cwd as bad_input', () => {
+  const recipe = { ...VALID, steps: [{ id: 'one', command: ['echo'], cwd: 42 }] };
+  assert.throws(() => loadRecipe(recipe), (err) => err instanceof OrchError && err.code === 'bad_input');
+});
+
+test('loadRecipe rejects an empty-string cwd as bad_input', () => {
+  const recipe = { ...VALID, steps: [{ id: 'one', command: ['echo'], cwd: '' }] };
   assert.throws(() => loadRecipe(recipe), (err) => err instanceof OrchError && err.code === 'bad_input');
 });
 
@@ -409,6 +583,14 @@ test('loadRecipe refuses a scheduled recipe with a positional placeholder as bad
 test('loadRecipe still accepts a positional placeholder in a recipe that is not scheduled', () => {
   const recipe = loadRecipe({ ...VALID, steps: [{ id: 'brief', command: ['rise-ops', 'brief', '{1}'] }] });
   assert.deepEqual(planSteps(recipe, ['BI'])[0].command, ['rise-ops', 'brief', 'BI']);
+});
+
+test('loadRecipe refuses a scheduled recipe with a positional placeholder in a step\'s cwd', () => {
+  // Regression: a scheduled dispatch passes no args, and cwd substitutes {n} exactly like
+  // command does — a placeholder hiding there would fail on every run just the same, but
+  // only the command array was ever checked.
+  const obj = scheduledWithSteps([{ id: 'build', command: ['go', 'build', './...'], cwd: '{1}' }]);
+  assert.throws(() => loadRecipe(obj), (err) => err instanceof OrchError && err.code === 'bad_input');
 });
 
 // ── cronArgs ──────────────────────────────────────────────────────────────────
@@ -726,12 +908,136 @@ await testAsync('runRecipe records the failing step before stopping', async () =
   assert.equal(last.run, 'run-3');
 });
 
+await testAsync('runRecipe collects a failing step\'s stderr for the caller to write', async () => {
+  // Regression: the DP-10854 ticket-implement postmortem — exit 9 and exit 1 carried no stderr
+  // anywhere in the audit log, so diagnosing them meant combing through command-code's own
+  // session store by hand. runRecipe stays hermetic (no I/O of its own): it hands the caller
+  // exactly what to write and where, the same division appendAudit already has for `lines`.
+  const recipe = loadRecipe(VALID);
+  const exec = fakeExec({ 'echo two': { code: 1, stdout: '', stderr: 'boom' } });
+  const result = await runRecipe(recipe, [], { exec, runId: 'run-stderr', now: () => 't0' });
+  assert.deepEqual(result.stderrLogs, [{ path: stderrLogPath('run-stderr', 'two'), content: 'boom' }]);
+  const last = JSON.parse(result.lines[1]);
+  assert.equal(last.stderr, stderrLogPath('run-stderr', 'two'));
+});
+
+await testAsync('runRecipe records no stderr log for a step with empty stderr', async () => {
+  const recipe = loadRecipe(VALID);
+  const exec = fakeExec({ 'echo two': { code: 1, stdout: '', stderr: '' } });
+  const result = await runRecipe(recipe, [], { exec, runId: 'run-nostderr', now: () => 't0' });
+  assert.deepEqual(result.stderrLogs, []);
+  const last = JSON.parse(result.lines[1]);
+  assert.equal('stderr' in last, false);
+});
+
+await testAsync('runRecipe records no stderr log for a successful step', async () => {
+  const recipe = loadRecipe(VALID);
+  const exec = fakeExec();
+  const result = await runRecipe(recipe, [], { exec, runId: 'run-ok', now: () => 't0' });
+  assert.deepEqual(result.stderrLogs, []);
+});
+
 await testAsync('runRecipe generates a runId when none is injected', async () => {
   const recipe = loadRecipe(VALID);
   const exec = fakeExec();
   const result = await runRecipe(recipe, [], { exec });
   assert.equal(typeof result.runId, 'string');
   assert.ok(result.runId.length > 0);
+});
+
+await testAsync('runRecipe threads a captured value from one step into a later step\'s command', async () => {
+  const recipe = loadRecipe({
+    name: 'worktree-then-use-it',
+    steps: [
+      { id: 'worktree', command: ['orca', 'worktree', 'create', '--json'], capture: { as: 'wt', json: 'result.worktree.path' } },
+      { id: 'implement', command: ['command-code', '-p', 'go', '--add-dir', '{captured.wt}'] },
+    ],
+    verify: { command: ['true'] },
+  });
+  const exec = (command) => {
+    if (command[0] === 'orca') {
+      return { code: 0, stdout: JSON.stringify({ result: { worktree: { path: '/tmp/wt-1' } } }), stderr: '' };
+    }
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  const result = await runRecipe(recipe, [], { exec, runId: 'run-capture' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.lines.map((l) => JSON.parse(l).cmd[JSON.parse(l).cmd.length - 1]), [
+    '--json',
+    '/tmp/wt-1',
+  ]);
+});
+
+await testAsync('runRecipe passes a step\'s resolved cwd to exec, including a captured value', async () => {
+  const recipe = loadRecipe({
+    name: 'cwd-run',
+    steps: [
+      { id: 'worktree', command: ['orca', 'worktree', 'create', '--json'], capture: { as: 'wt', json: 'result.worktree.path' } },
+      { id: 'build', command: ['go', 'build', './...'], cwd: '{captured.wt}' },
+    ],
+    verify: { command: ['true'] },
+  });
+  const seenOptions = [];
+  const exec = (command, options) => {
+    seenOptions.push(options);
+    if (command[0] === 'orca') {
+      return { code: 0, stdout: JSON.stringify({ result: { worktree: { path: '/tmp/wt-2' } } }), stderr: '' };
+    }
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  await runRecipe(recipe, [], { exec, runId: 'run-cwd' });
+  assert.equal(seenOptions[0].cwd, undefined);
+  assert.equal(seenOptions[1].cwd, '/tmp/wt-2');
+});
+
+await testAsync('runRecipe writes the captured value onto the capturing step\'s audit line', async () => {
+  // Proves the persistence findRunCaptured relies on: a separate `orch verify` invocation has
+  // no access to this run's in-memory `captured` map, only what got written to the audit log.
+  const recipe = loadRecipe({
+    name: 'capture-audit',
+    steps: [{ id: 'worktree', command: ['orca', 'worktree', 'create', '--json'], capture: { as: 'wt', json: 'result.worktree.path' } }],
+    verify: { command: ['true'] },
+  });
+  const exec = () => ({ code: 0, stdout: JSON.stringify({ result: { worktree: { path: '/tmp/wt-5' } } }), stderr: '' });
+  const result = await runRecipe(recipe, [], { exec, runId: 'run-capture-audit' });
+  const line = JSON.parse(result.lines[0]);
+  assert.deepEqual(line.capture, { name: 'wt', value: '/tmp/wt-5' });
+});
+
+await testAsync('runRecipe treats a failed capture as a step failure, without losing the line', async () => {
+  // Regression: capturedValue can throw (e.g. undeclared JSON shape) *after* the command
+  // itself already succeeded. Letting that exception propagate out of runRecipe would lose
+  // every already-collected line, including this step's own — so it is folded into the exact
+  // same "record the line, stop the run" path a non-zero exit already uses, not a separate
+  // throw.
+  const recipe = loadRecipe({
+    name: 'bad-capture',
+    steps: [
+      { id: 'one', command: ['echo', 'not json'], capture: { as: 'wt', json: 'a.b' } },
+      { id: 'two', command: ['echo', 'never runs'] },
+    ],
+    verify: { command: ['true'] },
+  });
+  const exec = () => ({ code: 0, stdout: 'not json', stderr: '' });
+  const result = await runRecipe(recipe, [], { exec, runId: 'run-bad-capture' });
+  assert.equal(result.ok, false);
+  assert.equal(result.lines.length, 1);
+  const line = JSON.parse(result.lines[0]);
+  assert.equal(line.step, 'one');
+  assert.notEqual(line.exit, 0);
+  assert.equal('capture' in line, false);
+});
+
+await testAsync('runRecipe throws bad_input when a step references a capture out of order', async () => {
+  const recipe = loadRecipe({
+    name: 'out-of-order',
+    steps: [{ id: 'one', command: ['echo', '{captured.never}'] }],
+    verify: { command: ['true'] },
+  });
+  await assert.rejects(
+    () => runRecipe(recipe, [], { exec: fakeExec(), runId: 'run-oob' }),
+    (err) => err instanceof OrchError && err.code === 'bad_input',
+  );
 });
 
 await testAsync('runRecipe threads settingsByStep into the executed command', async () => {
@@ -806,6 +1112,51 @@ test('auditLine includes args only when given', () => {
   assert.equal('args' in withoutArgs, false);
 });
 
+test('auditLine includes capture only when given', () => {
+  const withCapture = JSON.parse(
+    auditLine('run-9', 'smoke-test', { id: 'one', command: ['echo'] }, { code: 0 }, 't0', undefined, { name: 'wt', value: '/tmp/wt' }),
+  );
+  assert.deepEqual(withCapture.capture, { name: 'wt', value: '/tmp/wt' });
+  const withoutCapture = JSON.parse(auditLine('run-9', 'smoke-test', { id: 'one', command: ['echo'] }, { code: 0 }, 't0'));
+  assert.equal('capture' in withoutCapture, false);
+});
+
+test('auditLine includes stderr path only when given', () => {
+  const withStderr = JSON.parse(
+    auditLine('run-9', 'smoke-test', { id: 'one', command: ['echo'] }, { code: 1 }, 't0', undefined, undefined, '/tmp/log.stderr'),
+  );
+  assert.equal(withStderr.stderr, '/tmp/log.stderr');
+  const withoutStderr = JSON.parse(auditLine('run-9', 'smoke-test', { id: 'one', command: ['echo'] }, { code: 0 }, 't0'));
+  assert.equal('stderr' in withoutStderr, false);
+});
+
+test('stderrLogPath is deterministic from runId and stepId alone', () => {
+  const path = stderrLogPath('run-9', 'implement');
+  assert.match(path, /orch\/logs\/run-9\/implement\.stderr$/);
+  assert.equal(path, stderrLogPath('run-9', 'implement'));
+});
+
+// ── findRunCaptured ──────────────────────────────────────────────────────────
+
+test('findRunCaptured folds every capture line for a run', () => {
+  const entries = [
+    { run: 'run-1', capture: { name: 'wt', value: '/tmp/wt' } },
+    { run: 'run-1', capture: { name: 'sha', value: 'abc123' } },
+    { run: 'run-2', capture: { name: 'wt', value: '/tmp/other' } },
+  ];
+  assert.deepEqual(findRunCaptured(entries, 'run-1'), { wt: '/tmp/wt', sha: 'abc123' });
+});
+
+test('findRunCaptured returns {} for a run with no captures', () => {
+  const entries = [{ run: 'run-1', step: 'one' }];
+  assert.deepEqual(findRunCaptured(entries, 'run-1'), {});
+});
+
+test('findRunCaptured ignores entries from other runs', () => {
+  const entries = [{ run: 'run-2', capture: { name: 'wt', value: '/tmp/other' } }];
+  assert.deepEqual(findRunCaptured(entries, 'run-1'), {});
+});
+
 // ── runVerify ─────────────────────────────────────────────────────────────────
 
 await testAsync('runVerify runs the declared check and reports success', async () => {
@@ -850,6 +1201,36 @@ await testAsync('runVerify throws bad_input when verify.command references a {n}
     () => runVerify(recipe, [], { exec: fakeExec() }),
     (err) => err instanceof OrchError && err.code === 'bad_input',
   );
+});
+
+await testAsync('runVerify resolves {captured.*} from the captured map it is given', async () => {
+  // The whole reason captures are persisted to the audit log: runVerify runs in a separate
+  // invocation, long after the run that produced this value, so it cannot recover it any
+  // other way (see findRunCaptured).
+  const recipe = loadRecipe({
+    name: 'build-check',
+    steps: [{ id: 'worktree', command: ['orca', 'worktree', 'create'], capture: { as: 'wt' } }],
+    verify: { command: ['go', 'build', '{captured.wt}'] },
+  });
+  const exec = fakeExec();
+  const result = await runVerify(recipe, [], { exec, captured: { wt: '/tmp/wt-3' } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(exec.calls, [['go', 'build', '/tmp/wt-3']]);
+});
+
+await testAsync('runVerify passes verify.cwd (including a captured value) to exec', async () => {
+  const recipe = loadRecipe({
+    name: 'build-check-cwd',
+    steps: [{ id: 'worktree', command: ['orca', 'worktree', 'create'], capture: { as: 'wt' } }],
+    verify: { command: ['go', 'build', './...'], cwd: '{captured.wt}' },
+  });
+  let seenOptions;
+  const exec = (command, options) => {
+    seenOptions = options;
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  await runVerify(recipe, [], { exec, captured: { wt: '/tmp/wt-4' } });
+  assert.equal(seenOptions.cwd, '/tmp/wt-4');
 });
 
 // ── findRunRecipe / findRunArgs ────────────────────────────────────────────────

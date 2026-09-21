@@ -1,0 +1,44 @@
+{
+  "name": "ticket-implement",
+  "steps": [
+    {
+      "id": "worktree",
+      "command": ["orca", "worktree", "create", "--name", "{1}", "--repo", "{2}", "--json"],
+      "capture": { "as": "wt", "json": "result.worktree.path" }
+    },
+    {
+      "id": "kanban-create",
+      "command": ["hermes", "kanban", "create", "{1}", "--workspace", "worktree:{captured.wt}", "--json"],
+      "capture": { "as": "task", "json": "id" }
+    },
+    {
+      "id": "implement",
+      "agent": "cc-implementer",
+      "cwd": "{captured.wt}",
+      "command": [
+        "command-code", "-p", "{3}",
+        "--model", "{model}",
+        "--no-skills",
+        "--append-system-prompt=/Users/flp9damarpramuditya/.agent-tools/orch/rules/worktree-scope.md",
+        "--trust",
+        "--yolo",
+        "--skip-onboarding",
+        "--max-turns", "80"
+      ]
+    },
+    {
+      "id": "tier1-review",
+      "cwd": "{captured.wt}",
+      "command": [
+        "pi", "-p",
+        "Use the reviewer subagent to review the diff between HEAD and this worktree's base branch. Context: {1} - {3}. This is a tier-1 pre-merge review. End with the reviewer's standard Merge verdict line.",
+        "--mode", "text"
+      ]
+    },
+    {
+      "id": "kanban-request-review",
+      "command": ["hermes", "kanban", "request-review", "{captured.task}", "--summary", "tier-1 pi review complete - see orch audit log"]
+    }
+  ],
+  "verify": { "command": ["go", "build", "./..."], "cwd": "{captured.wt}" }
+}

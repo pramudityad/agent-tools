@@ -72,30 +72,64 @@ returned, so a run killed mid-flight looks like one still working and both read 
 a reason to go and check rather than to assume either way.
 
 **Step**:
-One command within a recipe: an `id` and a `command` array, plus two optional fields —
-`agent` (the id of an `agents.json` roster entry that carries out this step) and `settings`
-(that step's own declared overrides, e.g. a specific `model`). Commands are argv arrays,
-never shell strings — a step never passes through a shell, so there is nothing for a
-placeholder substitution to accidentally break out of.
+One command within a recipe: an `id` and a `command` array, plus four optional fields —
+`agent` (the id of an `agents.json` roster entry that carries out this step), `settings`
+(that step's own declared overrides, e.g. a specific `model`), `capture` (see below), and
+`cwd` (the directory the command runs in — defaults to wherever `orch` itself was invoked
+from when absent; substitutes the same way `command` tokens do, including `{captured.*}`, so
+a step can run inside a worktree an earlier step just created). Commands are argv arrays, never shell strings — a step never passes through a shell, so there
+is nothing for a placeholder substitution to accidentally break out of.
 _Avoid_: writing a step's `command` as a single string. `loadRecipe` rejects anything that
 is not an array.
 _Avoid_: giving a step the id `verify`. `orch verify` records its own line under that id, and
 that line is the only thing that closes a Run — so `loadRecipe` refuses the id as `bad_input`,
 and a step can never close a run it did not check.
 
+**Capture**:
+A step's declared `{as, json?}` — how that step's own result feeds a *later* step's command.
+With no `json`, the capture is the step's trimmed stdout verbatim; with a dotted `json` path
+(e.g. `"result.worktree.path"`), stdout is parsed as JSON first and that path is pulled out.
+A later step's command references it as `{captured.<as>}`. Added for the code-implementation
+lane (ADR 0005), whose first step — `orca worktree create --json` — reports a filesystem path
+no fixed naming convention could stand in for.
+_Avoid_: expecting `{captured.*}` to resolve at plan time. `planSteps` substitutes `{n}` and a
+step's own named settings for *every* step up front, before any of them run — a captured
+value cannot exist yet at that point, so it is left as a literal, unresolved placeholder.
+`runRecipe` resolves it per step, immediately before that step executes, once every earlier
+step has actually run and folded its capture in. Referencing a capture out of order, or one no
+step ever declares, is `bad_input`, raised at that step rather than at plan time.
+_Avoid_: assuming a capture is only visible inside the same `orch run`. Every captured value
+is also written onto its step's own audit line, so `orch verify <run-id>` — a separate
+invocation, possibly long after the run finished — can recover the whole map via
+`findRunCaptured` and resolve `{captured.*}` in `verify.command` or `verify.cwd` too.
+_Avoid_: treating a capture's own failure (e.g. `capture.json` not matching what the step
+actually printed) as a distinct failure mode from a non-zero exit. It is folded into the same
+one: the step's line is still recorded, and the run still stops — the alternative (letting it
+throw past `runRecipe`) was tried and found to silently drop every already-collected line,
+including the failing step's own.
+
 **Agent** (roster entry):
 One entry in `agents.json`: an `id`, a `harness`, and — only when model-backed — a `model`
-and its granted `capabilities`. `claude-planner` is the only model-backed entry in v1; it
-drives recipes and authors naskah. Every other entry (`rise-ops`, `rps-deck`, `graphify`,
-`hermes`) is a deterministic CLI with no model and nothing to grant.
+and its granted `capabilities`. `claude-planner` and `cc-implementer` are the model-backed
+entries; every CLI entry (`rise-ops`, `rps-deck`, `graphify`, `hermes`, `pi-reviewer`,
+`orca-worktree`) has no model and nothing to grant. `pi-reviewer` is deliberately not
+model-backed even though `pi` itself is an LLM harness — no run has ever needed to override
+`pi`'s default model or tool grants (see ADR 0005), so there is nothing yet for a `{model}`/
+`{capabilities}` template to carry; add them the day a real recipe needs to.
 _Avoid_: assuming every roster entry carries a model — most don't, and `loadAgents` refuses
 `capabilities` declared on an entry with no `model` as `bad_input`.
+_Avoid_: assuming `capabilities: []` on `cc-implementer` means it is under-privileged.
+Measured (ADR 0005): `command-code -p`'s default headless tool set already includes
+`edit_file`, `shell_command`, `read_directory`, `glob`, `grep` — everything a normal
+implementation task needs. `--tools-enable` only re-grants exotic tools (`cron_create`,
+`task_create`, `enter_plan_mode`, …) that an implementer has never needed.
 
 **Layer**:
 A harness orch sits on top of, and therefore depends on being reachable before a recipe
-failure can be trusted to be the recipe's fault. v1 has two — `claude` and `hermes`. `orch
-doctor` probes each one and reports an unreachable harness as `layer_down`, so a broken layer
-is never mistaken for a broken recipe.
+failure can be trusted to be the recipe's fault. v1 had two — `claude` and `hermes`; `orca`,
+`command-code` and `pi` joined once `agents.json` grew entries with those harnesses (ADR
+0005). `orch doctor` probes each one and reports an unreachable harness as `layer_down`, so a
+broken layer is never mistaken for a broken recipe.
 _Avoid_: expecting `doctor` to probe the CLI tools a recipe calls (`rise-ops`, `rps-deck`,
 `graphify`). Those are Steps inside a layer that already answered; a missing one surfaces as a
 failed step carrying its own message, not as a layer finding.
@@ -104,11 +138,13 @@ failed step carrying its own message, not as a layer finding.
 
 There is **no YAML parser anywhere in this repo**. Recipes and the agent roster are JSON;
 adding a YAML dependency would break the zero-dependency rule every sibling tool holds to.
-A step's command tokens support two closed forms of substitution, never a shell and never
-general templating: `{n}` (1-indexed) pulls from `orch run`'s positional args; any other
-`{name}` pulls from that step's own *resolved* settings — the output of `resolveConfig`, so
-a step whose command names `{model}` genuinely runs with whatever model won precedence for
-that run, not a copy the owner has to keep in sync by hand.
+A step's command tokens support three closed forms of substitution, never a shell and never
+general templating: `{n}` (1-indexed) pulls from `orch run`'s positional args; `{captured.X}`
+pulls from an earlier step's declared `capture`, resolved per step at run time rather than at
+plan time (see Capture, above); any other `{name}` pulls from that step's own *resolved*
+settings — the output of `resolveConfig`, so a step whose command names `{model}` genuinely
+runs with whatever model won precedence for that run, not a copy the owner has to keep in
+sync by hand.
 
 Four files, two of them versioned with the tool and two machine-local:
 

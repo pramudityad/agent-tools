@@ -37,14 +37,16 @@ const AGENTS_FILE = join(ROOT, 'agents.json');
 const CONFIG_DIR = join(homedir(), '.config', 'orch');
 const AUDIT_FILE = join(CONFIG_DIR, 'audit.jsonl');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const LOGS_DIR = join(CONFIG_DIR, 'logs');
 
 // The scheduler's own job store. orch reads it as data so `doctor` can audit jobs that
 // predate this tool; it never writes it — `hermes cron` owns it.
 const CRON_JOBS_FILE = join(homedir(), '.hermes', 'cron', 'jobs.json');
 
-// The harnesses v1 depends on — see CONTEXT.md's Layer entry. orca, command-code and pi
-// have nothing to do until the implementation lane lands, so `doctor` does not probe them.
-const LAYERS = ['claude', 'hermes'];
+// The harnesses orch depends on — see CONTEXT.md's Layer entry. orca, command-code and pi
+// joined once the implementation lane's roster entries landed (ADR 0005) — `agents.json`
+// naming an entry with one of these harnesses is what makes it a dependency worth probing.
+const LAYERS = ['claude', 'hermes', 'orca', 'command-code', 'pi'];
 
 // How long `orch status --insights` will wait on `hermes insights` before giving up on it.
 const INSIGHTS_TIMEOUT_MS = 15000;
@@ -115,15 +117,40 @@ export function loadRecipe(obj) {
     ) {
       fail('bad_input', `recipe "${obj.name}" step "${step.id}" has a "settings" field that must be an object`);
     }
+    if (step.capture !== undefined) {
+      if (typeof step.capture !== 'object' || step.capture === null || Array.isArray(step.capture)) {
+        fail('bad_input', `recipe "${obj.name}" step "${step.id}" has a "capture" field that must be an object`);
+      }
+      if (typeof step.capture.as !== 'string' || step.capture.as.length === 0) {
+        fail('bad_input', `recipe "${obj.name}" step "${step.id}" declares "capture" with no non-empty "as" name`);
+      }
+      if (step.capture.json !== undefined && (typeof step.capture.json !== 'string' || step.capture.json.length === 0)) {
+        fail('bad_input', `recipe "${obj.name}" step "${step.id}" declares "capture.json" that must be a non-empty string`);
+      }
+    }
     const normalized = { id: step.id, command: step.command };
     if (step.agent !== undefined) normalized.agent = step.agent;
     if (step.settings !== undefined) normalized.settings = step.settings;
+    if (step.capture !== undefined) {
+      normalized.capture = { as: step.capture.as };
+      if (step.capture.json !== undefined) normalized.capture.json = step.capture.json;
+    }
+    if (step.cwd !== undefined) {
+      if (typeof step.cwd !== 'string' || step.cwd.length === 0) {
+        fail('bad_input', `recipe "${obj.name}" step "${step.id}" has a "cwd" field that must be a non-empty string`);
+      }
+      normalized.cwd = step.cwd;
+    }
     return normalized;
   });
   if (typeof obj.verify !== 'object' || obj.verify === null || !isCommand(obj.verify.command)) {
     fail('no_verify', `recipe "${obj.name}" declares no Verify — refusing to run unverifiable work`);
   }
+  if (obj.verify.cwd !== undefined && (typeof obj.verify.cwd !== 'string' || obj.verify.cwd.length === 0)) {
+    fail('bad_input', `recipe "${obj.name}" verify has a "cwd" field that must be a non-empty string`);
+  }
   const recipe = { name: obj.name, steps, verify: { command: obj.verify.command } };
+  if (obj.verify.cwd !== undefined) recipe.verify.cwd = obj.verify.cwd;
   if (obj.schedule !== undefined) recipe.schedule = loadSchedule(obj.schedule);
   assertSchedulable(recipe);
   return recipe;
@@ -222,7 +249,8 @@ function assertSchedulable(recipe) {
         `recipe "${recipe.name}" declares a schedule but step "${step.id}" runs ${scripts.join(', ')} inside the turn — that is the combo-benchmark defect; ${fix}`,
       );
     }
-    if (step.command.some((token) => /\{\d+\}/.test(token))) {
+    const tokens = step.cwd === undefined ? step.command : [...step.command, step.cwd];
+    if (tokens.some((token) => /\{\d+\}/.test(token))) {
       fail(
         'bad_input',
         `recipe "${recipe.name}" declares a schedule but step "${step.id}" references a positional {n} argument, which a scheduled dispatch never passes — the job would fail on every run`,
@@ -369,12 +397,15 @@ export function harnessFindings(layers, reachable) {
  * `{}`, so a recipe with no agent-backed steps is unaffected.
  */
 export function planSteps(recipe, args, settingsByStep = {}) {
-  return recipe.steps.map((step) => ({
-    id: step.id,
-    command: step.command.map((token) =>
-      substitute(token, args, settingsByStep[step.id] ?? {}, recipe.name, step.id),
-    ),
-  }));
+  return recipe.steps.map((step) => {
+    const settings = settingsByStep[step.id] ?? {};
+    const planned = {
+      id: step.id,
+      command: step.command.map((token) => substitute(token, args, settings, recipe.name, step.id)),
+    };
+    if (step.cwd !== undefined) planned.cwd = substitute(step.cwd, args, settings, recipe.name, step.id);
+    return planned;
+  });
 }
 
 function substitute(token, args, settings, recipeName, stepId) {
@@ -389,12 +420,67 @@ function substitute(token, args, settings, recipeName, stepId) {
       }
       return value;
     }
+    // Left untouched here on purpose: a captured value cannot exist until the step that
+    // captures it has actually run, so planSteps (which substitutes every step up front,
+    // before any of them execute) cannot resolve this — substituteCaptured does, per step,
+    // immediately before that step runs (see runRecipe).
+    if (name.startsWith('captured.')) return placeholder;
     const value = settings[name];
     if (value === undefined) {
       fail('bad_input', `recipe "${recipeName}" step "${stepId}" references {${name}} but no such setting was resolved`);
     }
     return Array.isArray(value) ? value.join(',') : String(value);
   });
+}
+
+/**
+ * Resolves {captured.<name>} placeholders in an already-planned command, using values other
+ * steps in this same run have captured so far. Throws `bad_input` naming the step if a
+ * referenced capture was never declared, or belongs to a step that has not run yet — the
+ * latter can only mean a recipe references a capture out of order, since `runRecipe` folds
+ * each step's capture in immediately after that step succeeds.
+ */
+export function substituteCaptured(command, captured, stepId) {
+  return command.map((token) =>
+    token.replace(/\{captured\.([^{}]+)\}/g, (placeholder, name) => {
+      if (!(name in captured)) {
+        fail('bad_input', `step "${stepId}" references {captured.${name}} but no earlier step captured "${name}"`);
+      }
+      return captured[name];
+    }),
+  );
+}
+
+/**
+ * Extracts a dotted path (e.g. "result.worktree.path") from a parsed JSON value. Throws
+ * `bad_input` naming the step if the path does not resolve to a string — a capture exists to
+ * feed a later step's command token, and only a string substitutes cleanly there.
+ */
+function extractJsonPath(value, path, stepId) {
+  const resolved = path.split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), value);
+  if (typeof resolved !== 'string') {
+    fail('bad_input', `step "${stepId}" capture.json path "${path}" did not resolve to a string`);
+  }
+  return resolved;
+}
+
+/**
+ * Computes the value a step's declared `capture` extracts from its own result — `undefined`
+ * when the step declares no capture at all. With no `json` path, the capture is the step's
+ * trimmed stdout verbatim; with one, stdout is parsed as JSON first. Throws `bad_input` naming
+ * the step if `capture.json` is declared but stdout is not valid JSON, or the path does not
+ * resolve to a string.
+ */
+export function capturedValue(step, result) {
+  if (!step.capture) return undefined;
+  if (step.capture.json === undefined) return result.stdout.trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (err) {
+    fail('bad_input', `step "${step.id}" capture.json expects JSON stdout — ${err.message}`);
+  }
+  return extractJsonPath(parsed, step.capture.json, step.id);
 }
 
 // ── agents & config ───────────────────────────────────────────────────────────
@@ -723,9 +809,21 @@ export function renderStatus({ runs, runsError, jobs, jobsError, insights, insig
  * One JSON line (no trailing newline) recording a single step's outcome. `args` — the run's
  * positional args — is included only when given, so a run can be recovered well enough for
  * `orch verify` to re-substitute `{n}` into `verify.command` (see `findRunArgs`) without
- * every historical audit line needing the field.
+ * every historical audit line needing the field. `capture` — `{name, value}` — is included
+ * only on the step that actually captured something, so `orch verify` (a separate invocation,
+ * long after `runRecipe`'s in-memory `captured` map is gone) can recover it too (see
+ * `findRunCaptured`).
  */
-export function auditLine(runId, recipeName, step, result, ts = new Date().toISOString(), args = undefined) {
+export function auditLine(
+  runId,
+  recipeName,
+  step,
+  result,
+  ts = new Date().toISOString(),
+  args = undefined,
+  capture = undefined,
+  stderrPath = undefined,
+) {
   const line = {
     ts,
     run: runId,
@@ -735,13 +833,37 @@ export function auditLine(runId, recipeName, step, result, ts = new Date().toISO
     exit: result.code,
   };
   if (args !== undefined) line.args = args;
+  if (capture !== undefined) line.capture = capture;
+  if (stderrPath !== undefined) line.stderr = stderrPath;
   return JSON.stringify(line);
+}
+
+/**
+ * Where a step's stderr is written when it fails — deterministic from runId/stepId alone, so
+ * `auditLine` can embed the path with no I/O of its own (see `runRecipe`'s hermetic contract).
+ */
+export function stderrLogPath(runId, stepId) {
+  return join(LOGS_DIR, runId, `${stepId}.stderr`);
 }
 
 function appendAudit(lines) {
   if (lines.length === 0) return;
   mkdirSync(CONFIG_DIR, { recursive: true });
   appendFileSync(AUDIT_FILE, lines.join('\n') + '\n');
+}
+
+/**
+ * Writes each failed step's stderr to the path `auditLine` already recorded for it — the one
+ * piece exit-1-with-no-explanation was missing (see the DP-10854 `ticket-implement` postmortem:
+ * a step that crashed before command-code's own session transcript was ever written left nothing
+ * to diagnose from). A step with empty stderr writes no file; `stderrLogPath` still exists, but
+ * an empty log would only be noise.
+ */
+function writeStderrLogs(logs) {
+  for (const { path, content } of logs) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+  }
 }
 
 /** Recovers which recipe a run id used, from parsed audit entries. Throws `bad_input` if none match. */
@@ -764,6 +886,22 @@ export function findRunArgs(entries, runId) {
   return entry.args ?? [];
 }
 
+/**
+ * Recovers a run's captured values from its audit entries, the same way `findRunArgs`
+ * recovers positional args — so `orch verify` can resolve a Verify's own `{captured.*}`
+ * placeholders (see `runVerify`) after `runRecipe`'s in-memory `captured` map is long gone.
+ * Folded in the run's own line order, matching how `runRecipe` builds it live. A run with no
+ * capturing steps returns `{}` — that is not an error, unlike an unrecognized run id, which is
+ * `findRunRecipe`'s job to catch before this is ever called.
+ */
+export function findRunCaptured(entries, runId) {
+  const captured = {};
+  for (const entry of entries) {
+    if (entry.run === runId && entry.capture) captured[entry.capture.name] = entry.capture.value;
+  }
+  return captured;
+}
+
 function readAuditEntries() {
   if (!existsSync(AUDIT_FILE)) return [];
   return readFileSync(AUDIT_FILE, 'utf8')
@@ -780,6 +918,16 @@ function readAuditEntries() {
  * settings into its command; omit it for a recipe with no agent-backed steps. Returns
  * `{ runId, ok, lines }` — `lines` are audit-log strings the caller appends; this function
  * performs no filesystem or process I/O of its own, so it stays hermetic.
+ *
+ * A step that declares `capture` (see `loadRecipe`) has its result fed into `captured`
+ * immediately after it succeeds, so any later step's `{captured.<name>}` placeholder — left
+ * unresolved by `planSteps`, which runs before any step has executed — is substituted here,
+ * per step, right before that step runs. A recipe with no capturing steps is unaffected.
+ *
+ * A step that declares `cwd` runs with that as its working directory instead of orch's own —
+ * necessary the moment a recipe drives a tool against a specific checkout (e.g. a worktree
+ * `orca` just created) rather than the directory `orch` happened to be invoked from. `cwd`
+ * substitutes the same way `command` does, including `{captured.*}`.
  */
 export async function runRecipe(
   recipe,
@@ -788,14 +936,43 @@ export async function runRecipe(
 ) {
   const steps = planSteps(recipe, args, settingsByStep);
   const lines = [];
-  for (const step of steps) {
-    const result = await execOrFailure(exec, step.command);
-    lines.push(auditLine(runId, recipe.name, step, result, now(), args));
+  const stderrLogs = [];
+  const captured = {};
+  for (let i = 0; i < steps.length; i += 1) {
+    const step = steps[i];
+    const command = substituteCaptured(step.command, captured, step.id);
+    const cwd = step.cwd === undefined ? undefined : substituteCaptured([step.cwd], captured, step.id)[0];
+    let result = await execOrFailure(exec, command, { cwd });
+    let capture;
+    if (result.code === 0) {
+      // A declared capture that does not match what the step actually produced (bad JSON, a
+      // missing path) is treated as this step failing, not as a separate failure mode — it
+      // reuses the exact same "record the line, stop the run" path below, so `capturedValue`
+      // throwing can never lose the line for a step whose command genuinely did succeed.
+      try {
+        const value = capturedValue(recipe.steps[i], result);
+        if (value !== undefined) {
+          captured[recipe.steps[i].capture.as] = value;
+          capture = { name: recipe.steps[i].capture.as, value };
+        }
+      } catch (err) {
+        result = { code: 1, stdout: result.stdout, stderr: message(err) };
+      }
+    }
+    // Path computation is pure (see `stderrLogPath`); the actual write is the caller's job
+    // (`cmdRun`, via `writeStderrLogs`), same as `appendAudit` already owns writing `lines` —
+    // runRecipe stays hermetic (see this function's doc comment).
+    let stderrPath;
+    if (result.code !== 0 && typeof result.stderr === 'string' && result.stderr.trim().length > 0) {
+      stderrPath = stderrLogPath(runId, step.id);
+      stderrLogs.push({ path: stderrPath, content: result.stderr });
+    }
+    lines.push(auditLine(runId, recipe.name, { id: step.id, command }, result, now(), args, capture, stderrPath));
     if (result.code !== 0) {
-      return { runId, ok: false, lines };
+      return { runId, ok: false, lines, stderrLogs };
     }
   }
-  return { runId, ok: true, lines };
+  return { runId, ok: true, lines, stderrLogs };
 }
 
 /**
@@ -806,26 +983,37 @@ export async function runRecipe(
  * silently contradicting the "the failing step is recorded before the run stops" guarantee.
  * `code: null` distinguishes "never got an exit code" from a normal non-zero exit.
  */
-async function execOrFailure(exec, command) {
+async function execOrFailure(exec, command, options = {}) {
   try {
-    return await exec(command);
+    return await exec(command, options);
   } catch (err) {
     return { code: null, stdout: '', stderr: message(err) };
   }
+}
+
+/** Substitutes `{n}`/settings and then `{captured.*}` in one token — the same two-phase order `runRecipe` applies per step, collapsed for a caller (`runVerify`) that has both sources available at once. */
+function resolveTemplate(token, args, captured, recipeName, stepId) {
+  return substituteCaptured([substitute(token, args, {}, recipeName, stepId)], captured, stepId)[0];
 }
 
 /**
  * Runs a recipe's declared Verify via the injected `exec`. `args` re-substitutes `{n}` into
  * `verify.command` exactly as `planSteps` does for a step — a Verify checking "is *this*
  * naskah approved" needs to know which naskah, and the run's own args are the only source of
- * that once the run is over (see `findRunArgs`). Reports success or failure — including a
- * check that could not even be spawned, or a `{n}` this run's args can't resolve — without
- * throwing on the exec, though an unresolved placeholder still throws `bad_input` (there is
- * nothing to execute yet, so that failure is not a `runVerify` result to report).
+ * that once the run is over (see `findRunArgs`). `captured` (default `{}`) resolves any
+ * `{captured.*}` placeholder the same way, from the run's own audit lines (see
+ * `findRunCaptured`) — a Verify checking "does the worktree build" needs to know which
+ * worktree, and by the time `orch verify` runs, `runRecipe`'s in-memory `captured` map from
+ * the original run is long gone. Reports success or failure — including a check that could
+ * not even be spawned — without throwing on the exec, though an unresolved placeholder still
+ * throws `bad_input` (there is nothing to execute yet, so that failure is not a `runVerify`
+ * result to report).
  */
-export async function runVerify(recipe, args, { exec }) {
-  const command = recipe.verify.command.map((token) => substitute(token, args, {}, recipe.name, VERIFY_STEP_ID));
-  const result = await execOrFailure(exec, command);
+export async function runVerify(recipe, args, { exec, captured = {} }) {
+  const command = recipe.verify.command.map((token) => resolveTemplate(token, args, captured, recipe.name, VERIFY_STEP_ID));
+  const cwd =
+    recipe.verify.cwd === undefined ? undefined : resolveTemplate(recipe.verify.cwd, args, captured, recipe.name, VERIFY_STEP_ID);
+  const result = await execOrFailure(exec, command, { cwd });
   return { ok: result.code === 0, exit: result.code, stdout: result.stdout, stderr: result.stderr, command };
 }
 
@@ -833,11 +1021,16 @@ export async function runVerify(recipe, args, { exec }) {
 
 /**
  * The real exec — the single impure boundary. `timeout` bounds a command that may not return,
- * which is the only reason `status` does not hang on a third-party CLI.
+ * which is the only reason `status` does not hang on a third-party CLI. `cwd` runs the command
+ * against a specific directory (a step's declared `cwd`, e.g. a worktree) instead of wherever
+ * `orch` itself was invoked from; omitted, `spawnSync` defaults to `process.cwd()` as always.
  */
-function realExec(command, { timeout } = {}) {
+function realExec(command, { timeout, cwd } = {}) {
   const [cmd, ...rest] = command;
-  const proc = spawnSync(cmd, rest, timeout === undefined ? { encoding: 'utf8' } : { encoding: 'utf8', timeout });
+  const options = { encoding: 'utf8' };
+  if (timeout !== undefined) options.timeout = timeout;
+  if (cwd !== undefined) options.cwd = cwd;
+  const proc = spawnSync(cmd, rest, options);
   if (proc.error) fail('io_error', proc.error.message);
   return { code: proc.status ?? 1, stdout: proc.stdout ?? '', stderr: proc.stderr ?? '' };
 }
@@ -951,10 +1144,12 @@ async function cmdRun(name, ...rawArgs) {
       say(`▸ step "${step.id}" (agent "${step.agent}") resolved settings: ${JSON.stringify(settingsByStep[step.id])}`);
     }
   }
-  const { runId, ok, lines } = await runRecipe(recipe, args, { exec: realExec, settingsByStep });
+  const { runId, ok, lines, stderrLogs } = await runRecipe(recipe, args, { exec: realExec, settingsByStep });
   appendAudit(lines);
+  writeStderrLogs(stderrLogs);
   if (!ok) {
-    fail('step_failed', `recipe "${name}" failed — run ${runId} — see ${AUDIT_FILE}`);
+    const stderrHint = stderrLogs.length > 0 ? ` — stderr: ${stderrLogs[stderrLogs.length - 1].path}` : '';
+    fail('step_failed', `recipe "${name}" failed — run ${runId} — see ${AUDIT_FILE}${stderrHint}`);
   }
   say(`✓ ${name} — run ${runId} — ${lines.length} step(s)`);
 }
@@ -964,12 +1159,19 @@ async function cmdVerify(runId) {
   const entries = readAuditEntries();
   const recipeName = findRunRecipe(entries, runId);
   const args = findRunArgs(entries, runId);
+  const captured = findRunCaptured(entries, runId);
   const recipe = loadRecipeFile(recipeName);
-  const result = await runVerify(recipe, args, { exec: realExec });
-  const line = auditLine(runId, recipeName, { id: VERIFY_STEP_ID, command: result.command }, { code: result.exit });
+  const result = await runVerify(recipe, args, { exec: realExec, captured });
+  let stderrPath;
+  if (!result.ok && typeof result.stderr === 'string' && result.stderr.trim().length > 0) {
+    stderrPath = stderrLogPath(runId, VERIFY_STEP_ID);
+    writeStderrLogs([{ path: stderrPath, content: result.stderr }]);
+  }
+  const line = auditLine(runId, recipeName, { id: VERIFY_STEP_ID, command: result.command }, { code: result.exit }, undefined, undefined, undefined, stderrPath);
   appendAudit([line]);
   if (!result.ok) {
-    fail('verify_failed', `verify failed for run "${runId}" (recipe "${recipeName}") — exit ${result.exit}`);
+    const stderrHint = stderrPath ? ` — stderr: ${stderrPath}` : '';
+    fail('verify_failed', `verify failed for run "${runId}" (recipe "${recipeName}") — exit ${result.exit}${stderrHint}`);
   }
   say(`✓ verify passed — run ${runId} — recipe "${recipeName}"`);
 }
