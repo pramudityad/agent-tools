@@ -16,3 +16,11 @@ _Avoid_: pipeline, lifecycle, recipe (a recipe is an `orch` term).
 A situation that starts outside the sesi flow and merges onto it — a susulan Tugas, a batch
 publish, UTS/UAS work.
 _Avoid_: exception, special case.
+
+## Cross-reference
+
+The UTS/UAS on-ramp merges onto `course-assessment-design`, a sibling skill for the same
+courses this router serves. It lives as its own top-level context —
+`~/.agent-tools/course-assessment-design/` — because `link-skills.sh` links one `stubs/` per
+tool name, and this context already uses its one `stubs/` for the router itself. See
+`CONTEXT-MAP.md`.

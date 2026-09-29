@@ -53,8 +53,9 @@ A situation that starts outside the sesi flow and merges onto it.
 - **Batch publish** — "upload materi 1-5", "upload tugas 1-2": read what RISE already
   carries before uploading anything, so a re-run does not add a duplicate row. See
   `references/batch-publish-recipe.md`.
-- **UTS/UAS** — merges onto the `course-assessment-design` skill (a sibling skill in this
-  same context) for how the graded artifact is shaped. If it is not installed yet, say so
+- **UTS/UAS** — merges onto the `course-assessment-design` skill
+  (`~/.agent-tools/course-assessment-design/stubs/SKILL.md` — its own linked context, see
+  `CONTEXT-MAP.md`) for how the graded artifact is shaped. If it is not installed yet, say so
   rather than improvising the assessment design here.
 
 ## Out of scope
