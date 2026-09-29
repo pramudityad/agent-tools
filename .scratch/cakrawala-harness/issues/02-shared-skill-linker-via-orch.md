@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done (commit 19a1a3a)
 
-- [ ] A root `test.mjs` runs the script against a temp `HOME` with fake `.claude`, `.pi`, `.hermes`, `.agents` and asserts every link target
-- [ ] Re-running is idempotent; an absent agent is skipped with a message
-- [ ] A pre-existing real directory at a target is moved aside with a timestamped suffix, never deleted
-- [ ] `orch/install.sh` runs clean; `readlink` on each agent's `orch` skill resolves to `orch/stubs`
-- [ ] The marker-guarded `AGENTS.md` append still works unchanged
+- [x] A root `test.mjs` runs the script against a temp `HOME` with fake `.claude`, `.pi`, `.hermes`, `.agents` and asserts every link target
+- [x] Re-running is idempotent; an absent agent is skipped with a message
+- [x] A pre-existing real directory at a target is moved aside with a timestamped suffix, never deleted
+- [x] `orch/install.sh` runs clean; `readlink` on each agent's `orch` skill resolves to `orch/stubs`
+- [x] The marker-guarded `AGENTS.md` append still works unchanged
