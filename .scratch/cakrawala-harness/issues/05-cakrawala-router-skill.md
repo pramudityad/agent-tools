@@ -4,9 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done (commit 9f12d59)
 
-- [ ] Uses the `cakrawala/CONTEXT.md` terms (sesi flow, on-ramp) and the vault glossary; no avoided terms
-- [ ] No primitive only one agent has
-- [ ] Every agent's `cakrawala` skill resolves to `cakrawala/stubs`; Hermes's `cakrawala-session-ops` is moved aside
-- [ ] Both Hermes references survive as router references
+- [x] Uses the `cakrawala/CONTEXT.md` terms (sesi flow, on-ramp) and the vault glossary; no avoided terms
+- [x] No primitive only one agent has
+- [x] Every agent's `cakrawala` skill resolves to `cakrawala/stubs`; Hermes's `cakrawala-session-ops` is moved aside
+- [x] Both Hermes references survive as router references
