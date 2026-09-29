@@ -3,14 +3,11 @@
 # upgrade. Only touches agents that are actually present on this machine.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$ROOT/.." && pwd)"
 MARKER="## sin-think toolkit"
 
-install_skill() {
-  local dest_dir="$1" label="$2"
-  mkdir -p "$dest_dir/sin-think"
-  cp "$ROOT/stubs/SKILL.md" "$dest_dir/sin-think/SKILL.md"
-  echo "✓ $label → $dest_dir/sin-think/SKILL.md"
-}
+# Hermes groups skills into category directories; Claude and pi keep them flat.
+HERMES_CATEGORY="${HERMES_CATEGORY:-software-development}"
 
 append_agents_md() {
   local file="$1" label="$2"
@@ -50,8 +47,10 @@ PY
 
 validate_frontmatter
 
-install_skill "$HOME/.claude/skills" "claude"
-[ -d "$HOME/.config/pi" ] && install_skill "$HOME/.config/pi/skills" "pi"
+# Symlinks the skill into ~/.agents/skills/sin-think and every present agent's own skills
+# dir — see docs/adr/0001 and ../link-skills.sh's own header for the scheme.
+bash "$REPO_ROOT/link-skills.sh" sin-think "$HERMES_CATEGORY"
+
 [ -d "$HOME/.codex" ] && append_agents_md "$HOME/.codex/AGENTS.md" "codex"
 [ -d "$HOME/.hermes" ] && append_agents_md "$HOME/.hermes/AGENTS.md" "hermes"
 

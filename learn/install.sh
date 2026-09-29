@@ -4,14 +4,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$ROOT/.." && pwd)"
 MARKER="## Learn toolkit"
 
-install_skill() {
-  local dest_dir="$1" label="$2"
-  mkdir -p "$dest_dir/learn"
-  cp "$ROOT/stubs/SKILL.md" "$dest_dir/learn/SKILL.md"
-  echo "✓ $label → $dest_dir/learn/SKILL.md"
-}
+# Hermes groups skills into category directories; Claude and pi keep them flat.
+HERMES_CATEGORY="${HERMES_CATEGORY:-teaching}"
 
 append_agents_md() {
   local file="$1" label="$2"
@@ -55,8 +52,10 @@ PY
 echo "Installing learn pointers from $ROOT"
 validate_frontmatter
 
-[ -d "$HOME/.claude" ] && install_skill "$HOME/.claude/skills" "claude code"
-[ -d "$HOME/.pi/agent" ] && install_skill "$HOME/.pi/agent/skills" "pi"
+# Symlinks the skill into ~/.agents/skills/learn and every present agent's own skills dir —
+# see docs/adr/0001 and ../link-skills.sh's own header for the scheme.
+bash "$REPO_ROOT/link-skills.sh" learn "$HERMES_CATEGORY"
+
 [ -d "$HOME/.codex" ] && append_agents_md "$HOME/.codex/AGENTS.md" "codex"
 [ -d "$HOME/.hermes" ] && append_agents_md "$HOME/.hermes/AGENTS.md" "hermes"
 
