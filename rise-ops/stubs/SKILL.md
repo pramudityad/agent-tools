@@ -131,6 +131,10 @@ user asks "apa yang belum beres" or comes back after a gap.
 
 ## Known sharp edges
 
+- **The `description` field is HTML-escaped and mangles markdown**, in both a tugas
+  description and a `discussion post`. See `references/html-escaping-pitfalls.md`.
+- **Never verify a write from the command's own success output or an immediate GET** — see
+  `references/verify-writes.md`.
 - **`percentage_attendance` from RISE is always 0.** Never quote it. The tool computes the
   real number from per-sesi marks.
 - **`attendance_deadline` is advisory** — late corrections are accepted, verified against a
@@ -193,6 +197,10 @@ to parse it yourself. A `.zip` is auto-extracted one level into a `contents/` su
   the GET response's own field names, not from documentation — if it 400s, that's the real
   contract disagreeing with the guess, not a bug to route around.
 
+## Kelompok (class-group)
+
+Not yet a `rise-ops` command. See `references/kelompok-endpoints.md` for the raw endpoints.
+
 ## User preferences (Cakrawala — Damar)
 
 - Concise and direct. No preamble.
@@ -200,3 +208,5 @@ to parse it yourself. A `.zip` is auto-extracted one level into a `contents/` su
 - File-based deliverables, absolute paths.
 - **Sesi ≠ week.** One sesi is one meeting; a pekan holds two.
 - RPS governs assessment; the Kontrak governs logistics.
+- Two verified session shorthands ("go", "udh approved") — see
+  `references/user-workflow-shorthands.md`.
