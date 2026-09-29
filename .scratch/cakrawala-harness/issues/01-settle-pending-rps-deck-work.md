@@ -4,8 +4,8 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-human
+**Status:** done (commit eef9475)
 
-- [ ] `git status` in the repo shows nothing pending under `rps-deck/`
-- [ ] ADR 0007 is tracked, or its removal is a deliberate commit
-- [ ] rps-deck tests pass on the committed state
+- [x] `git status` in the repo shows nothing pending under `rps-deck/`
+- [x] ADR 0007 is tracked, or its removal is a deliberate commit
+- [x] rps-deck tests pass on the committed state (63 passed)
