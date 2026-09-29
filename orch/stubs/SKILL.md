@@ -7,8 +7,10 @@ description: >-
   by phrases such as "run the sesi recipe", "run orch <name>", "verify run <id>", "schedule the
   benchmark job", "why did that cron fail", or "what did that run do". NOT for building new
   capabilities directly — orch dispatches to a tool that already exists (`rise-ops`,
-  `rps-deck`, `graphify`, `hermes`) rather than doing the work itself, and it currently has no
-  worktree, review, or gate machinery (that lane is specified but not built).
+  `rps-deck`, `graphify`, `hermes`, `orca`, `command-code`, `pi`) rather than doing the work
+  itself; the worktree/implement/tier-1-review lane (ADR 0005) runs through the
+  `ticket-implement` and `ticket-promote` recipes, but the tier-2 Standards+Spec gate itself
+  still runs outside `orch run`.
 ---
 
 # orch — a validated recipe runner
@@ -128,9 +130,11 @@ section says so and the rest still prints, exit `0`. Read-only in every mode.
 
 ## What this tool does not do
 
-It does not create worktrees, run a review pass, or gate a merge — those exist in `orca`,
-`pi`, and a Claude review respectively, and are not wired into orch yet. If a user asks for
-one of those through orch, say so plainly rather than approximating it with a recipe step.
+The tier-2 Standards+Spec gate is not a recipe step — it is the driving Claude session running
+a code review directly (per ADR 0005), after `ticket-implement` has already isolated a
+worktree, implemented the ticket, and run pi's tier-1 review, and before `ticket-promote` opens
+the MR. If a user asks orch to run that gate itself, say so plainly rather than approximating
+it with a recipe step.
 
 ## User preferences
 

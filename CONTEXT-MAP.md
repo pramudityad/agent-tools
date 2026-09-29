@@ -34,8 +34,10 @@ Every tool in this repo follows the same shape:
 
 - `<tool>.mjs` — zero-dependency single file. No `node_modules`, no build step.
 - `test.mjs` — run by `install.sh`, which **refuses to install if the tests fail**.
-- `install.sh` — idempotent; symlinks the CLI into `~/.local/bin`, copies `stubs/SKILL.md` into
-  each agent that is actually present (`~/.claude`, `~/.pi`, `~/.hermes`), and marker-guards an
+- `install.sh` — idempotent; symlinks the CLI into `~/.local/bin`, calls the shared
+  [`link-skills.sh`](link-skills.sh) to symlink `stubs/` into `~/.agents/skills/<tool>` and into
+  each agent that is actually present (`~/.claude`, `~/.pi`, `~/.hermes`) — see
+  [`docs/adr/0001`](docs/adr/0001-skills-reach-agents-by-symlink.md) — and marker-guards an
   append of `stubs/AGENTS.md` into each agent's root `AGENTS.md` (`~/.claude`, `~/.codex`,
   `~/.hermes`) so re-running the installer never duplicates the block.
 - `CONTEXT.md` — the glossary. `CONTRACT.md` — exit codes and the stderr-JSON error shape.

@@ -4,20 +4,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$ROOT/.." && pwd)"
 MARKER="## orch"
 
 # Hermes groups skills into category directories; Claude and pi keep them flat. orch spans
 # harness maintenance and teaching, so it sits under "ops" rather than either alone.
 HERMES_CATEGORY="${HERMES_CATEGORY:-ops}"
-
-# $1 the agent root that must exist, $2 the skills dir to write into, $3 a label
-install_skill() {
-  local guard="$1" dest_dir="$2" label="$3"
-  [ -d "$guard" ] || { echo "• $label not present — skipped"; return; }
-  mkdir -p "$dest_dir/orch"
-  cp "$ROOT/stubs/SKILL.md" "$dest_dir/orch/SKILL.md"
-  echo "✓ $label → ${dest_dir/#$HOME/~}/orch/SKILL.md"
-}
 
 append_agents_md() {
   local guard="$1" file="$2" label="$3"
@@ -43,9 +35,10 @@ ln -sf "$ROOT/orch.mjs" "$HOME/.local/bin/orch"
 chmod +x "$ROOT/orch.mjs"
 echo "✓ orch → ~/.local/bin/orch"
 
-install_skill    "$HOME/.claude"  "$HOME/.claude/skills"                      "claude code"
-install_skill    "$HOME/.pi"      "$HOME/.pi/agent/skills"                    "pi"
-install_skill    "$HOME/.hermes"  "$HOME/.hermes/skills/$HERMES_CATEGORY"     "hermes"
+# Symlinks the skill into ~/.agents/skills/orch and every present agent's own skills dir —
+# see docs/adr/0001 and ../link-skills.sh's own header for the scheme.
+bash "$REPO_ROOT/link-skills.sh" orch "$HERMES_CATEGORY"
+
 append_agents_md "$HOME/.claude"  "$HOME/.claude/AGENTS.md"                   "claude AGENTS.md"
 append_agents_md "$HOME/.codex"   "$HOME/.codex/AGENTS.md"                    "codex"
 append_agents_md "$HOME/.hermes"  "$HOME/.hermes/AGENTS.md"                   "hermes AGENTS.md"
