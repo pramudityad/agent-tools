@@ -4,10 +4,10 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done (commit 99d2284)
 
-- [ ] Tested through the CLI against a temp course directory holding one sesi in each state
-- [ ] `stale` reuses the existing approval-hash logic, not a new one
-- [ ] Rows are keyed by session note number (no pertemuan inference)
-- [ ] Documented in the rps-deck stub SKILL.md and `--help`
-- [ ] On the real BI folder, output matches what is on disk
+- [x] Tested through the CLI against a temp course directory holding one sesi in each state
+- [x] `stale` reuses the existing approval-hash logic, not a new one
+- [x] Rows are keyed by session note number (no pertemuan inference)
+- [x] Documented in the rps-deck stub SKILL.md and `--help`
+- [x] On the real BI folder, output matches what is on disk
