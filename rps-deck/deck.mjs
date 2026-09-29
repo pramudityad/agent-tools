@@ -5,7 +5,7 @@
 // The spec `.md` is the single source of truth (ADR 0001): everything rendered is
 // derived from it, never retyped alongside it.
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -1075,6 +1075,50 @@ export function approvalState(text) {
   return { state: 'approved', message: `approved ${frontmatter['approved-on']}` };
 }
 
+// ── course status ─────────────────────────────────────────────────────────────
+
+// Matches any per-sesi file, naskah included — the sesi number is what's wanted, not
+// which file carries it (a session note may drift in topic wording, never in number).
+const SESI_FILE_RE = /^Sesi (\d+) - .+\.md$/i;
+
+/** Every distinct sesi number named by a file in the course dir, sorted ascending. */
+function sesiNumbers(files) {
+  const numbers = new Set();
+  for (const file of files) {
+    const match = file.match(SESI_FILE_RE);
+    if (match) numbers.add(match[1]);
+  }
+  return [...numbers].sort((a, b) => Number(a) - Number(b));
+}
+
+// Slides is sometimes built with a "<course> - Sesi NN - Slides.*" prefix and sometimes
+// without (older sesi in the real vault carry no prefix) — a suffix match covers both
+// without guessing which convention a given course folder settled on.
+const anyEndsWith = (files, suffix) => files.some((f) => f.endsWith(suffix));
+
+/**
+ * One row per sesi number: naskah state (missing | draft | approved | stale, reusing
+ * approvalState's own hash check), and whether Slides/Materi were built. Read-only.
+ */
+export function courseStatus(courseDir) {
+  const files = readdirSync(courseDir);
+  return sesiNumbers(files).map((n) => {
+    const naskahName = `Sesi ${n} - Naskah.md`;
+    let naskah = 'missing';
+    if (files.includes(naskahName)) {
+      const text = readFileSync(join(courseDir, naskahName), 'utf8');
+      const state = approvalState(text).state;
+      naskah = state === 'unapproved' ? 'draft' : state;
+    }
+    return {
+      n,
+      naskah,
+      slides: anyEndsWith(files, `Sesi ${n} - Slides.html`) || anyEndsWith(files, `Sesi ${n} - Slides.pdf`),
+      materi: anyEndsWith(files, `Sesi ${n} - Materi.md`),
+    };
+  });
+}
+
 // ── RPS contract ──────────────────────────────────────────────────────────────
 //
 // Two tables are well-formed enough to parse and vary per session; three prose blocks
@@ -1224,6 +1268,7 @@ const USAGE = `rps-deck — build session decks from a naskah you author and rev
   render   <naskah.md>               emit the student-facing Materi.md
   approve  <naskah.md>               stamp approval, bound to the content hash
   build    <naskah.md>               requires approval; emits "<course> - Sesi NN - Slides.html/.pdf"
+  status   <course-dir>              one row per sesi: naskah state, Slides/Materi present
   scan     <file> <map.json>         residual identifier scan
   sanitise <src> <map.json> <dst>    apply the map, then scan the result
              [--section "A|B"]       keep only these sections (with subsections)
@@ -1403,6 +1448,34 @@ const cmdBuild = ({ args }) => {
   return 0;
 };
 
+/** Read-only report, never a gate: it always exits 0, even on a bad path. */
+const cmdStatus = ({ args }) => {
+  const dir = args[0];
+  if (!dir) {
+    console.error('  ✗ usage: status <course-dir>');
+    return 0;
+  }
+  let rows;
+  try {
+    rows = courseStatus(dir);
+  } catch (err) {
+    console.error(`  ✗ ${err.message}`);
+    return 0;
+  }
+  if (!rows.length) {
+    console.log('  (no Sesi NN files found)');
+    return 0;
+  }
+  for (const row of rows) {
+    console.log(
+      `  Sesi ${row.n}  naskah: ${row.naskah.padEnd(8)} slides: ${row.slides ? 'yes' : 'no '} materi: ${row.materi ? 'yes' : 'no '}`,
+    );
+  }
+  const next = rows.find((row) => row.naskah !== 'approved');
+  console.log(next ? `→ Sesi ${next.n} has no approved naskah` : '→ every sesi has an approved naskah');
+  return 0;
+};
+
 const cmdScan = ({ command, args, options }) => {
   const [source, mapPath, destination] = args;
   const map = JSON.parse(readFileSync(mapPath, 'utf8'));
@@ -1445,6 +1518,7 @@ const COMMANDS = {
   render: cmdRender,
   approve: cmdApprove,
   build: cmdBuild,
+  status: cmdStatus,
   scan: cmdScan,
   sanitise: cmdScan,
 };

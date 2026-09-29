@@ -109,6 +109,21 @@ deck.mjs build --final "Sesi NN - Naskah.md"
 `--final` refuses on an open `FLAG` or a stale approval hash. Publish the **materi** only;
 open the naskah as a local file, so no instructor URL exists to be mis-pasted.
 
+## Checking course state
+
+```sh
+deck.mjs status "<course-dir>"
+```
+
+Read-only, exits 0 always. One row per sesi number found in the directory (from any
+`Sesi NN - <topic>.md` file, keyed by that number — no guessing which pertemuan it maps to):
+naskah `missing | draft | approved | stale` (stale reuses the same approval-hash check as
+`build`), whether Slides and Materi were built. A final line names the lowest-numbered sesi
+with no approved naskah, so you know what to author next without reading the whole table.
+
+Run this before starting the six steps below on an unfamiliar course, and again after
+`approve`/`build` to confirm the state changed.
+
 ## Standing rules
 
 - Generated HTML and `Materi.md` are gitignored; the naskah, sanitised artifacts, maps and

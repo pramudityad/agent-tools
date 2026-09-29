@@ -383,6 +383,61 @@ test('the built deck carries speaker notes — it is the instructor file, kept l
   assert.ok(html.includes('Katakan sesi selesai'), 'note text present — this file is the naskah, not a public materi');
 });
 
+// ── status ───────────────────────────────────────────────────────
+
+const courseDir = mkdtempSync(join(tmpdir(), 'rps-deck-status-'));
+// Sesi 01: session note only — no naskah yet.
+writeFileSync(join(courseDir, 'Sesi 01 - Intro.md'), '# Intro\n');
+// Sesi 02: naskah drafted, never approved.
+writeFileSync(join(courseDir, 'Sesi 02 - Architecture.md'), '# Architecture\n');
+writeFileSync(join(courseDir, 'Sesi 02 - Naskah.md'), MINIMAL);
+// Sesi 03: approved, built — slides and materi both on disk.
+writeFileSync(join(courseDir, 'Sesi 03 - Warehousing.md'), '# Warehousing\n');
+writeFileSync(join(courseDir, 'Sesi 03 - Naskah.md'), approve(MINIMAL, '2026-09-04'));
+writeFileSync(join(courseDir, 'Sesi 03 - Slides.html'), '<html></html>');
+writeFileSync(join(courseDir, 'Sesi 03 - Materi.md'), '# Materi\n');
+// Sesi 04: approved, then edited — stale.
+writeFileSync(join(courseDir, 'Sesi 04 - ETL.md'), '# ETL\n');
+writeFileSync(join(courseDir, 'Sesi 04 - Naskah.md'), approve(MINIMAL, '2026-09-04').replace('20:00.', '20:05.'));
+
+test('status reports one row per sesi: missing, draft, approved, stale', () => {
+  const { status, out } = run(['status', courseDir], dir);
+  assert.equal(status, 0, out);
+  assert.match(out, /Sesi 01.*missing/);
+  assert.match(out, /Sesi 02.*draft/);
+  assert.match(out, /Sesi 03.*approved/);
+  assert.match(out, /Sesi 04.*stale/);
+});
+
+test('status reports whether Slides and Materi were built', () => {
+  const { out } = run(['status', courseDir], dir);
+  const sesi03 = out.split('\n').find((line) => line.includes('Sesi 03'));
+  assert.match(sesi03, /slides.*yes/i);
+  assert.match(sesi03, /materi.*yes/i);
+  const sesi01 = out.split('\n').find((line) => line.includes('Sesi 01'));
+  assert.match(sesi01, /slides.*no/i);
+  assert.match(sesi01, /materi.*no/i);
+});
+
+test('status finds Slides built under a course-prefixed filename too', () => {
+  writeFileSync(join(courseDir, 'Sesi 05 - OLAP.md'), '# OLAP\n');
+  writeFileSync(join(courseDir, 'Sesi 05 - Naskah.md'), approve(MINIMAL, '2026-09-04'));
+  writeFileSync(join(courseDir, 'Business Intelligence Systems - Sesi 05 - Slides.html'), '<html></html>');
+  const { out } = run(['status', courseDir], dir);
+  const sesi05 = out.split('\n').find((line) => line.includes('Sesi 05'));
+  assert.match(sesi05, /slides.*yes/i);
+});
+
+test('status names the lowest-numbered sesi with no approved naskah', () => {
+  const { out } = run(['status', courseDir], dir);
+  assert.match(out.trim().split('\n').at(-1), /Sesi 01/);
+});
+
+test('status never fails the process, even on a bad path', () => {
+  const { status } = run(['status', join(courseDir, 'does-not-exist')], dir);
+  assert.equal(status, 0);
+});
+
 // \u2500\u2500 DUR + restamp \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
 const DURSPEC = `---
