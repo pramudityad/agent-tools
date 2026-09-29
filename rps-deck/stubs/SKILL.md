@@ -209,3 +209,17 @@ unchecked. SDLC has two starts per night (odd sesi 18:30, even sesi 20:00, both 
 picked by the naskah's `session` field parity; a naskah with no numeric `session` field
 fails asking for one instead of guessing. This is in addition to, not instead of, the
 existing Σ DUR = slot-minutes check — this one validates that slot-minutes itself is real.
+
+## Verbatim sub-CPMK (ticket 10) — built, not yet wired into `check`
+
+`checkVerbatimSubCpmk(quoted, official)` compares a naskah's quoted sub-CPMK against the
+RPS row's `subCpmk` text, whitespace-normalised (collapsed and trimmed, so a line-wrapped
+quote still matches a single-line one) — punctuation is not normalised, so a dropped
+trailing period is a real mismatch, not a false positive. It is a pure function, tested
+directly; `check <naskah.md>` does not call it yet, because `check` only ever receives a
+naskah path, never an RPS path, at the same call — there is no session/course-aware lookup
+today that hands it both. There is also no one fixed place a naskah's sub-CPMK quote lives
+(no `sub-cpmk:` frontmatter key, no marked section) — it appears as free prose, worded
+differently per course, so nothing safe to grep automatically. Run `checkVerbatimSubCpmk`
+by hand against a naskah's quoted sentence and the RPS row's `parseRps(...).row.subCpmk`
+until a real call site hands `check` both paths at once.

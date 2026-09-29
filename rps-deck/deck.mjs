@@ -1237,6 +1237,25 @@ export function parseRps(text, session) {
   return { row, rubric, blocks };
 }
 
+// ── verbatim sub-CPMK (ticket 10) ───────────────────────────────────────────────
+//
+// A naskah quoting the RPS row's sub-CPMK must quote it exactly, whitespace aside — a
+// line-wrapped copy is still the same sentence, a paraphrase is not. Pure comparison only:
+// no naskah currently has one fixed place a quote lives (frontmatter field, marked
+// section), so there is nothing yet to extract automatically — see SKILL.md.
+
+const normaliseWhitespace = (text) => text.replace(/\s+/g, ' ').trim();
+
+/** Compares a naskah's quoted sub-CPMK against the RPS row's text, whitespace aside. */
+export function checkVerbatimSubCpmk(quoted, official) {
+  if (normaliseWhitespace(quoted) === normaliseWhitespace(official)) return [];
+  return [{
+    line: 0,
+    slide: 0,
+    message: `sub-CPMK is not verbatim from the RPS — quoted: "${quoted}" — official: "${official}"`,
+  }];
+}
+
 // ── extraction ────────────────────────────────────────────────────────────────
 //
 // Sanitising a 989-line implementation plan produces a 989-line file, which is not what

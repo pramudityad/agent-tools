@@ -23,7 +23,7 @@ function run(args, cwd) {
   }
 }
 
-import { parseSpec, validate, renderHtml, renderKonten, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap, checkSlotTruth } from './deck.mjs';
+import { parseSpec, validate, renderHtml, renderKonten, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap, checkSlotTruth, checkVerbatimSubCpmk } from './deck.mjs';
 
 let passed = 0;
 const failed = [];
@@ -696,6 +696,29 @@ test('parseRps reports where the prose blocks are, for the agent to read', () =>
 
 test('asking for a session the RPS does not define is an error, not a guess', () => {
   assert.throws(() => parseRps(RPS, 9), /sesi 9/i);
+});
+
+// \u2500\u2500 seam 2c: checkVerbatimSubCpmk (ticket 10) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+test('a verbatim quote passes', () => {
+  const official = 'Mahasiswa mampu menjelaskan peran BI dalam pengambilan keputusan.';
+  assert.deepEqual(checkVerbatimSubCpmk(official, official), []);
+});
+
+test('a paraphrase fails, naming both texts', () => {
+  const official = 'Mahasiswa mampu menjelaskan peran BI dalam pengambilan keputusan.';
+  const quoted = 'Mahasiswa dapat menerangkan peran BI dalam keputusan bisnis.';
+  const errors = checkVerbatimSubCpmk(quoted, official);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /not verbatim/);
+  assert.ok(errors[0].message.includes(quoted), 'names the quoted text');
+  assert.ok(errors[0].message.includes(official), 'names the official text');
+});
+
+test('a whitespace-only difference (line-wrapped quote) passes', () => {
+  const official = 'Mahasiswa mampu membangun pemuatan data yang idempoten untuk satu dimensi dan satu fact table.';
+  const quoted = 'Mahasiswa mampu membangun pemuatan data\nyang idempoten   untuk satu dimensi dan satu fact table.  ';
+  assert.deepEqual(checkVerbatimSubCpmk(quoted, official), []);
 });
 
 // \u2500\u2500 extraction \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
