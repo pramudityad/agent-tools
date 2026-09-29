@@ -7,7 +7,8 @@ description: >
   builds separate instructor and student decks. Triggered by phrases such as buat slide
   sesi N, bikin deck untuk sesi, naskah pengampu, materi mahasiswa, or a request to prepare
   teaching material from a Week NN session note. Also use to re-render after editing a
-  naskah, to approve one, or to sanitise an artifact a session projects.
+  naskah, to approve one, to sanitise an artifact a session projects, or to build the
+  standalone lecturer-introduction deck (`00 Intro Dosen`).
   NOT for: writing the RPS itself, grading, or lesson design from scratch — this builds from
   an existing session note plus an approved RPS contract.
 ---
@@ -24,6 +25,21 @@ scan** — and respect the ADRs in `docs/adr/`.
 toolkit is course-agnostic on purpose; per-course facts — real slot lengths, how weeks map
 to sessions, the sanitisation names in use — live there, not here.
 
+**Not a deck?** Course-level graded artifacts — UTS/UAS briefs, DoD checklists, rubrics, the
+RISE Tugas text — are a different class of work; see the `course-assessment-design` skill.
+
+## Which artifact "the deck" means
+
+Four different files get called "the deck". Only one is what "slides" or "pdf" means:
+`Sesi NN - Naskah.md` (source, hand-authored), `Sesi NN - Materi.md` (student handout, from
+`render`), the `sesiNN-deck-pengampu/mahasiswa.html` pair from `build` (an intermediate, not
+the deliverable), and **`Sesi NN - Slides.html` + `.pdf`** (the projectable deck — the
+actual answer to "give me the slides"). `build` passing proves the naskah was released; it
+does not mean the slide deliverable exists yet. Full table, build/probe/print recipe, and
+what stales the visual deck after a naskah edit: `references/visual-deck.md`. Distinguishing
+what belongs in a student zip vs. an internal instructor file:
+`references/artifact-classification.md`.
+
 ## The six steps
 
 Each ends on a checkable criterion. Do not move on before it holds.
@@ -36,7 +52,8 @@ deck.mjs session <n> <rps.md>
 
 Prints the session row and rubric, and reports the line numbers of **Bobot Penilaian**,
 **Ketentuan Penilaian** and **Pustaka** — read those three yourself; they are prose, not
-fields.
+fields. `session` parses Markdown tables only; if the approved contract is a `.docx` and
+`session` reports "not found", check for a Markdown mirror and sync its row first.
 
 *Done when:* you can state the session's bobot, sub-CPMK, penilaian, metode and Materi
 topics without looking again.
@@ -52,7 +69,10 @@ do not infer.
 
 Watch for the **reverse** gap too: where the RPS mandates materi the week note omits, add
 it to the deck, log the omission in the register, and name in the Aksi where any deferred
-remainder lands (typically the next session's opener).
+remainder lands (typically the next session's opener). A **whole-topic swap** (the note
+teaches something the RPS row doesn't mandate for this session at all, not just a drifted
+sub-topic) is a blocking decision, not a cut ledger entry — log it and get an explicit
+reorder-vs-revise ruling before authoring.
 
 *Done when:* every conflict has a ruling and any deviation is in the register.
 
@@ -63,7 +83,12 @@ rename map, choose the sections worth showing, then:
 
 ```sh
 deck.mjs sanitise <src> <map.json> <dst> --section "Problem Statement"
+deck.mjs scan     <dst> <map.json>
 ```
+
+A session naming more than one artifact needs one map per artifact — do not reuse a single
+map across unrelated sources. Map-key/case pitfalls, the self-mention trap, and what "personal
+(non-employer)" still requires: `references/sanitise-mechanics.md`.
 
 *Done when:* the scan exits clean. Tell the user plainly that renaming does not hide
 structure, and let them make the disclosure call.
@@ -80,11 +105,19 @@ deck.mjs check   "Sesi NN - Naskah.md"
 
 The refit itself is judgement: which segment loses minutes depends on the note's instructor
 notes, and those protect things the arithmetic cannot see. Record the cuts as prose in the
-naskah, with each dropped segment naming where it went.
+naskah, with each dropped segment naming where it went. When a slot must be compressed,
+take it from lab/gallery time before ever touching the break.
 
 The mandate applies to a teaching deck; a note whose slide outline says *logistics only*
 locks to its declared count via `deck-type: logistics`. Include a `DO NOT INVENT` section
 listing every hard number that appears on a slide.
+
+Field-tested authoring aids: the delayed-example pattern for any lab that ends in a `HOLD`
+(`references/lab-example-pattern.md`), a one-line first-use gloss for dense English terms
+(`references/student-friendly-glossa-2026-09-17.md`), and a pengampu-only delivery section
+some naskah carry beyond the slide content — key sentences and a demo fallback, never handed
+to a slide-generation step (`references/instructor-delivery-script.md`). `check` failures
+this list and `FORMAT.md` don't already explain: `references/parser-gotchas.md`.
 
 *Done when:* `check` passes.
 
@@ -95,19 +128,28 @@ deck.mjs render "Sesi NN - Naskah.md"
 ```
 
 Hand the user **both** files — the naskah they author and the materi students receive. This
-is the review gate; stop here until they respond.
+is the review gate; stop here until they respond. Do not call `approve` or `build`, and do
+not hand-build `Sesi NN - Slides.html/.pdf`, until the user explicitly says to proceed for
+that sesi — "prepare" or a draft request alone is not approval.
 
-*Done when:* the user has reviewed both and said so.
+*Done when:* the user has reviewed both and explicitly said to proceed.
 
 ### 6. Approve and build
 
 ```sh
 deck.mjs approve "Sesi NN - Naskah.md"
-deck.mjs build --final "Sesi NN - Naskah.md"
+deck.mjs build "Sesi NN - Naskah.md"
 ```
 
-`--final` refuses on an open `FLAG` or a stale approval hash. Publish the **materi** only;
-open the naskah as a local file, so no instructor URL exists to be mis-pasted.
+`build` refuses outright — no file written — on an open `FLAG` or a stale approval hash
+(ADR 0007). `--final` is still accepted, as a harmless no-op; it is not required and changes
+nothing. Publish the **materi** only; open the naskah as a local file, so no instructor URL
+exists to be mis-pasted.
+
+Approval is also the trigger to produce the actual projectable deck —
+`Sesi NN - Slides.html` + `.pdf` — if it doesn't exist yet or the naskah changed since it was
+last built. Build order, the probe step, and the print recipe:
+`references/visual-deck.md`.
 
 ## Checking course state
 
@@ -124,11 +166,36 @@ with no approved naskah, so you know what to author next without reading the who
 Run this before starting the six steps below on an unfamiliar course, and again after
 `approve`/`build` to confirm the state changed.
 
+## Intro deck (`00 Intro Dosen`) — separate artifact
+
+A standalone lecturer-introduction deck is its own artifact, hand-built from scratch outside
+the six steps above, and is not a `Sesi NN` deck — no RPS row governs it. Content shape,
+where its facts come from, and the print recipe: `references/intro-deck.md`.
+
+## Field-tested course lessons (Cakrawala)
+
+Concrete, previously-hit pitfalls worth reading before repeating them, one topic per file:
+
+- Slot refits: `bi-sesi02-dual-artifact-105min-refit.md`, `bi-sesi04-diagnostic-queries-and-batch-note.md`,
+  `bi-sesi05-105min-and-visual-deck-pitfalls.md`, `sdlc-double-sesi-180min.md`,
+  `sdlc-sesi04-genap-slot-and-claims-register.md`, `wad-sesi01-120min-pitfalls.md`,
+  `wad-sesi02-missing-week.md`, `wad-sesi05-vue-and-visual-deck.md`.
+- Multi-course/multi-sesi fan-out: `parallel-3-course-sesi03.md`,
+  `sdlc-sesi03-04-parallel-visual-build.md`.
+- Vault-wide renumbering history: `cakrawala-week-to-sesi-rename-2026-09-15.md`.
+- Kontrak Kuliah (the per-course syllabus-style contract document, not the RPS):
+  `kontrak-kuliah-template.md`, `kontrak-kuliah-value-edit.md`.
+- Bichronous/mostly-async delivery and the discipline clauses that come with it:
+  `online-bichronous-90pct.md`, `tata-tertib-per-course.md`.
+- The berita acara §7 table `rise-ops` reads verbatim: `naskah-section7-and-rise-records.md`.
+- A star-schema lab producing a paste-ready DBML diagram: `star-schema-dbdiagram.md`.
+- Batch-printing several sessions' visual decks in one pass: `print-sesi-slides-batch.md`.
+
 ## Standing rules
 
 - Generated HTML and `Materi.md` are gitignored; the naskah, sanitised artifacts, maps and
   the defect register are committed.
 - Never put a number on a slide that nobody has measured. Use `TODO` plus a slide-level
-  `FLAG`, and let `--final` hold the line.
+  `FLAG`, and let `build` refuse rather than guessing.
 - A `Sesi NN - Research.md` may exist and is useful when a session has no week note. Nothing
   generates or validates it — see ADR 0005 for why.

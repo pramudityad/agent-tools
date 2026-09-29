@@ -43,10 +43,9 @@
   ],
   "verify": {
     "command": [
-      "node",
-      "/Users/flp9damarpramuditya/.agent-tools/rps-deck/deck.mjs",
-      "build",
-      "--final",
+      "python3",
+      "-c",
+      "import pathlib, re, subprocess, sys\nnaskah = sys.argv[1]\np = pathlib.Path(naskah)\nm = re.search('Sesi\\\\s*(\\\\d+)', p.name, re.I)\nif not m:\n    print('no sesi number found in naskah filename: ' + naskah, file=sys.stderr); sys.exit(1)\nsesi = m.group(1).zfill(2)\nproc = subprocess.run(['node', '/Users/flp9damarpramuditya/.agent-tools/rps-deck/deck.mjs', 'status', str(p.parent)], capture_output=True, text=True)\nif proc.returncode != 0:\n    print('rps-deck status failed: ' + proc.stderr, file=sys.stderr); sys.exit(1)\nline = None\nfor l in proc.stdout.split('\\n'):\n    if l.strip().startswith('Sesi ' + sesi + ' '):\n        line = l\n        break\nif line is None:\n    print('no status row for Sesi ' + sesi + ' in ' + str(p.parent), file=sys.stderr); sys.exit(1)\nready = ('naskah: approved' in line) and ('slides: yes' in line) and ('materi: yes' in line)\nif not ready:\n    print('Sesi ' + sesi + ' not ready: ' + line.strip(), file=sys.stderr); sys.exit(1)\nprint('Sesi ' + sesi + ' approved with Slides and Materi present: ' + line.strip())\n",
       "{1}"
     ]
   }
