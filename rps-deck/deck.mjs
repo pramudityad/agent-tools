@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 // ── spec grammar ──────────────────────────────────────────────────────────────
 
@@ -1119,6 +1120,52 @@ export function courseStatus(courseDir) {
   });
 }
 
+// ── slot truth (ADR 0008) ───────────────────────────────────────────────────────
+//
+// The real slot lives in `slots.json`, beside this file, keyed by the naskah's `course`
+// frontmatter. A course with one start time per night (BI, WAD) uses `start`/`minutes`.
+// SDLC runs two sesi a night at different times, so it uses `oddStart`/`evenStart` (both
+// `minutes` long) and parity comes from the naskah's `session` field — the field name
+// `build` already reads (see `cmdBuild`). This shape was chosen over one row per sesi
+// number because only the parity matters, not the specific sesi.
+
+const SLOTS_PATH = join(dirname(fileURLToPath(import.meta.url)), 'slots.json');
+
+function loadSlots() {
+  return JSON.parse(readFileSync(SLOTS_PATH, 'utf8'));
+}
+
+/** Resolves one course table entry to the real {start, minutes} for this naskah's sesi. */
+function realSlot(entry, session) {
+  if (!entry.oddStart) return { start: entry.start, minutes: entry.minutes };
+  if (!Number.isInteger(session)) return null;
+  return { start: session % 2 === 1 ? entry.oddStart : entry.evenStart, minutes: entry.minutes };
+}
+
+/**
+ * Compares a naskah's declared `slot-start`/`slot-minutes` against the real slot table.
+ * A course missing from the table refuses outright — never guessed or defaulted.
+ */
+export function checkSlotTruth(fm, table) {
+  const course = fm.course;
+  const entry = table[course];
+  if (!entry) {
+    return [{ line: 0, slide: 0, message: `unknown course "${course ?? '(none)'}" — ask the lecturer for the real slot` }];
+  }
+  const real = realSlot(entry, fm.session);
+  if (!real) {
+    return [{ line: 0, slide: 0, message: `${course} needs a numeric "session" field to pick its odd/even slot — found session=${fm.session ?? '(none)'}` }];
+  }
+  const errors = [];
+  if (fm['slot-start'] !== real.start) {
+    errors.push({ line: 0, slide: 0, message: `slot-start "${fm['slot-start'] ?? '(none)'}" disagrees with the real ${course} slot (${real.start})` });
+  }
+  if (fm['slot-minutes'] !== real.minutes) {
+    errors.push({ line: 0, slide: 0, message: `slot-minutes ${fm['slot-minutes'] ?? '(none)'} disagrees with the real ${course} slot (${real.minutes} min)` });
+  }
+  return errors;
+}
+
 // ── RPS contract ──────────────────────────────────────────────────────────────
 //
 // Two tables are well-formed enough to parse and vary per session; three prose blocks
@@ -1348,9 +1395,10 @@ const cmdCheck = ({ args }) => {
     return 1;
   }
   const { spec, errors } = loadNaskah(path);
-  if (errors.length) {
-    console.error(`✗ ${basename(path)} — ${errors.length} problem(s)`);
-    reportErrors(errors);
+  const allErrors = [...errors, ...checkSlotTruth(spec.frontmatter, loadSlots())];
+  if (allErrors.length) {
+    console.error(`✗ ${basename(path)} — ${allErrors.length} problem(s)`);
+    reportErrors(allErrors);
     return 1;
   }
   console.log(`✓ ${basename(path)} — ${spec.slides.length} slides, clock consistent`);

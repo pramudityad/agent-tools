@@ -199,3 +199,13 @@ Concrete, previously-hit pitfalls worth reading before repeating them, one topic
   `FLAG`, and let `build` refuse rather than guessing.
 - A `Sesi NN - Research.md` may exist and is useful when a session has no week note. Nothing
   generates or validates it — see ADR 0005 for why.
+
+## Slot truth (ADR 0008)
+
+`check` now also refuses a naskah whose `slot-start`/`slot-minutes` disagree with the real
+slot table in `slots.json` (keyed by the naskah's `course` frontmatter). A course absent
+from that table fails outright — "ask the lecturer for the real slot" — rather than passing
+unchecked. SDLC has two starts per night (odd sesi 18:30, even sesi 20:00, both 90 min),
+picked by the naskah's `session` field parity; a naskah with no numeric `session` field
+fails asking for one instead of guessing. This is in addition to, not instead of, the
+existing Σ DUR = slot-minutes check — this one validates that slot-minutes itself is real.

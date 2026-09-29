@@ -1,0 +1,18 @@
+{
+  "Business Intelligence Systems": {
+    "start": "18:15",
+    "minutes": 105,
+    "confirmed": "2026-09-03"
+  },
+  "Web Application Development": {
+    "start": "20:00",
+    "minutes": 120,
+    "confirmed": "logged as D1 in its register"
+  },
+  "Software Development Life Cycle": {
+    "oddStart": "18:30",
+    "evenStart": "20:00",
+    "minutes": 90,
+    "confirmed": "SDLC D1 2026-09-04"
+  }
+}

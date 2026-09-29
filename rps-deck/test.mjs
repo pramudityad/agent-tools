@@ -23,7 +23,7 @@ function run(args, cwd) {
   }
 }
 
-import { parseSpec, validate, renderHtml, renderKonten, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap } from './deck.mjs';
+import { parseSpec, validate, renderHtml, renderKonten, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap, checkSlotTruth } from './deck.mjs';
 
 let passed = 0;
 const failed = [];
@@ -153,6 +153,51 @@ test('a teaching deck outside its mandate is an error', () => {
 test('a logistics-only deck is exempt from the mandate', () => {
   const logistics = MINIMAL.replace('session: 1', 'session: 1\nmandate: 30-40\ndeck-type: logistics');
   assert.equal(errorsFor(logistics), '');
+});
+
+// ── seam 2b: checkSlotTruth (ADR 0008) ─────────────────────────────────────────
+
+const SLOT_TABLE = {
+  'Business Intelligence Systems': { start: '18:15', minutes: 105, confirmed: 'test' },
+  'Software Development Life Cycle': { oddStart: '18:30', evenStart: '20:00', minutes: 90, confirmed: 'test' },
+};
+
+test('a naskah matching the real slot passes slot truth', () => {
+  const fm = { course: 'Business Intelligence Systems', session: 1, 'slot-start': '18:15', 'slot-minutes': 105 };
+  assert.deepEqual(checkSlotTruth(fm, SLOT_TABLE), []);
+});
+
+test('a 150-minute BI naskah fails slot truth, naming the disagreeing field', () => {
+  const fm = { course: 'Business Intelligence Systems', session: 1, 'slot-start': '18:15', 'slot-minutes': 150 };
+  const errors = checkSlotTruth(fm, SLOT_TABLE);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /slot-minutes 150 disagrees with the real Business Intelligence Systems slot \(105 min\)/);
+});
+
+test('SDLC odd sesi is checked against 18:30', () => {
+  const fm = { course: 'Software Development Life Cycle', session: 3, 'slot-start': '18:30', 'slot-minutes': 90 };
+  assert.deepEqual(checkSlotTruth(fm, SLOT_TABLE), []);
+});
+
+test('SDLC even sesi is checked against 20:00, not the odd start', () => {
+  const fm = { course: 'Software Development Life Cycle', session: 4, 'slot-start': '18:30', 'slot-minutes': 90 };
+  const errors = checkSlotTruth(fm, SLOT_TABLE);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /slot-start "18:30" disagrees with the real Software Development Life Cycle slot \(20:00\)/);
+});
+
+test('SDLC without a numeric session field refuses instead of guessing parity', () => {
+  const fm = { course: 'Software Development Life Cycle', 'slot-start': '18:30', 'slot-minutes': 90 };
+  const errors = checkSlotTruth(fm, SLOT_TABLE);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /needs a numeric "session" field/);
+});
+
+test('an unknown course fails, telling the lecturer to supply the real slot', () => {
+  const fm = { course: 'Underwater Basketweaving', session: 1, 'slot-start': '18:00', 'slot-minutes': 90 };
+  const errors = checkSlotTruth(fm, SLOT_TABLE);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /unknown course "Underwater Basketweaving" — ask the lecturer for the real slot/);
 });
 
 // ── seam 3: renderHtml ────────────────────────────────────────────────────────
@@ -329,6 +374,17 @@ test('check fails a spec with a missing field, naming the slide', () => {
   assert.equal(status, 1);
   assert.match(out, /slide 2/);
   assert.match(out, /VISUAL/);
+});
+
+// `check` also validates against the real slot table shipped in slots.json (ADR 0008),
+// not only the naskah's own internal DUR/clock consistency.
+const BAD_SLOT = MINIMAL.replace('slot-minutes: 105', 'slot-minutes: 150');
+writeFileSync(join(dir, 'bad-slot.md'), BAD_SLOT);
+
+test('check refuses a naskah whose slot-minutes disagrees with the real course slot', () => {
+  const { status, out } = run(['check', 'bad-slot.md'], dir);
+  assert.equal(status, 1, out);
+  assert.match(out, /slot-minutes 150 disagrees with the real Business Intelligence Systems slot \(105 min\)/);
 });
 
 const SLIDES_NAME = 'Business Intelligence Systems - Sesi 01 - Slides.html';
