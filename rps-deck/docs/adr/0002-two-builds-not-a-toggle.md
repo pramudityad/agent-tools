@@ -1,6 +1,7 @@
 # 0002 — Two builds, not a toggle
 
-**Status:** accepted · 2026-09-03
+**Status:** accepted · 2026-09-03 — the "Companion decision" below is superseded by ADR 0007
+(`build` no longer has a materi variant, or a warn-only mode).
 
 ## Context
 

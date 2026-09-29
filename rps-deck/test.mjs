@@ -23,7 +23,7 @@ function run(args, cwd) {
   }
 }
 
-import { parseSpec, validate, renderHtml, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap } from './deck.mjs';
+import { parseSpec, validate, renderHtml, renderKonten, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap } from './deck.mjs';
 
 let passed = 0;
 const failed = [];
@@ -109,6 +109,16 @@ test('every documented marker is accepted', () => {
   assert.deepEqual(spec.errors, [], 'no marker should be reported unknown');
 });
 
+test('DIAGRAM renders a named SVG from the fixed library', () => {
+  const html = renderKonten('DIAGRAM class-box');
+  assert.match(html, /<svg/);
+  assert.match(html, /PurchaseRequest/);
+});
+
+test('DIAGRAM with an unknown name fails loudly, naming the name', () => {
+  assert.throws(() => renderKonten('DIAGRAM not-a-real-diagram'), /not-a-real-diagram/);
+});
+
 // ── seam 2: validate ──────────────────────────────────────────────────────────
 
 const errorsFor = (text) => validate(parseSpec(text)).map((e) => e.message).join(' | ');
@@ -161,21 +171,20 @@ test('materi carries no speaker notes, visual directives or notes pane', () => {
   assert.ok(!html.includes('tabel 3 kolom'), 'no visual text anywhere in source');
 });
 
-test('naskah carries notes, visual directives and a notes pane', () => {
+test('naskah carries notes and visual directives inline, per slide', () => {
   const html = renderHtml(parseSpec(MINIMAL), { audience: 'naskah' });
   assert.equal(html.match(/class="notes"/g).length, 2);
-  assert.equal(html.match(/class="visual"/g).length, 2);
-  assert.match(html, /id="pane"/);
+  assert.ok(html.includes('tabel 3 kolom'), 'VISUAL text surfaces for the instructor');
   assert.ok(html.includes('Katakan sesi selesai'));
   assert.ok(html.includes('18:23'), 'clock stamp present');
 });
 
 // \u2500\u2500 projectable deck \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-test('every slide becomes one section, and only the first is live', () => {
+test('every slide becomes one section, and only the first is shown', () => {
   const html = renderHtml(parseSpec(MINIMAL), { audience: 'materi' });
   assert.equal((html.match(/<section class="slide/g) ?? []).length, 2);
-  assert.equal((html.match(/class="slide live"/g) ?? []).length, 1, 'exactly one starts live');
+  assert.equal((html.match(/class="slide on"/g) ?? []).length, 1, 'exactly one starts shown');
   assert.match(html, /id="s1"/);
   assert.match(html, /id="s2"/);
 });
@@ -184,7 +193,7 @@ test('the deck is navigable and self-contained', () => {
   const html = renderHtml(parseSpec(MINIMAL), { audience: 'materi' });
   assert.match(html, /ArrowRight/, 'keyboard nav');
   assert.match(html, /ArrowLeft/);
-  assert.match(html, /id="count"/, 'slide counter');
+  assert.match(html, /id="pos"/, 'slide counter');
   assert.equal(html.match(/src="https?:/g), null, 'no external scripts');
   assert.equal(html.match(/href="https?:\/\/[^"]*\.css/g), null, 'no external stylesheets');
 });
@@ -241,12 +250,13 @@ test('a panel can carry a good/bad variant', () => {
   assert.ok(!html.includes('BAD'), 'the variant word never renders');
 });
 
-test('both themes are defined at token level, never colour inside a media block only', () => {
+test('the projectable deck is a single fixed light palette, matching the classroom template', () => {
+  // Sesi 01-04's own "Slides.html" (the reference this template matches) never carried a
+  // dark variant either — a projector deck is not a themeable app surface.
   const html = renderHtml(parseSpec(MINIMAL), { audience: 'materi' });
-  assert.match(html, /:root\{/, 'light tokens on bare :root');
-  assert.match(html, /:root:not\(\[data-theme="light"\]\)/, 'dark guarded so explicit light wins');
-  assert.match(html, /:root\[data-theme="dark"\]/, 'toggle wins in both directions');
-  assert.match(html, /body\{[^}]*background:var\(--ground\)/, 'body paints from a token');
+  assert.match(html, /:root\{/, 'palette tokens on :root');
+  assert.match(html, /html,body\{margin:0;padding:0;background:var\(--bg\)/, 'body paints from a token');
+  assert.ok(!html.includes('prefers-color-scheme'), 'no dark-mode branch to keep in sync');
 });
 
 // ── seam 4: scanResiduals ─────────────────────────────────────────────────────
@@ -321,56 +331,56 @@ test('check fails a spec with a missing field, naming the slide', () => {
   assert.match(out, /VISUAL/);
 });
 
-test('build warns on an open FLAG but still emits', () => {
+const SLIDES_NAME = 'Business Intelligence Systems - Sesi 01 - Slides.html';
+
+// `build` is a single unconditional gate: no open FLAG and a fresh approval, or nothing
+// is written. There is no lesser "preview an unapproved draft" mode any more.
+
+test('build refuses while a FLAG is open, approved or not', () => {
   const { status, out } = run(['build', 'flagged.md'], dir);
-  assert.equal(status, 0, out);
-  assert.match(out, /FLAG/);
-  assert.ok(existsSync(join(dir, 'flagged-pengampu.html')), 'naskah written');
-  assert.ok(existsSync(join(dir, 'flagged-mahasiswa.html')), 'materi written');
-});
-
-test('build --final refuses while a FLAG is open', () => {
-  const { status, out } = run(['build', '--final', 'flagged.md'], dir);
-  assert.equal(status, 1);
-  assert.match(out, /FLAG/);
-});
-
-test('build --final refuses a stale approval', () => {
-  writeFileSync(join(dir, 'appr.md'), approve(MINIMAL, '2026-09-04'));
-  assert.equal(run(['build', '--final', 'appr.md'], dir).status, 0, 'approved build works');
-  // one character of note text changes, and the approval no longer describes the file
-  writeFileSync(join(dir, 'appr.md'), approve(MINIMAL, '2026-09-04').replace('20:00.', '20:05.'));
-  const { status, out } = run(['build', '--final', 'appr.md'], dir);
   assert.equal(status, 1, out);
-  assert.match(out, /changed since approval|stale/i);
+  assert.match(out, /FLAG/);
+  assert.ok(!existsSync(join(dir, SLIDES_NAME)), 'nothing written while a FLAG is open');
 });
 
-test('build --final on an unapproved naskah says so', () => {
-  const { status, out } = run(['build', '--final', 'ok.md'], dir);
+test('build refuses an unapproved naskah', () => {
+  const { status, out } = run(['build', 'ok.md'], dir);
   assert.equal(status, 1, out);
   assert.match(out, /not approved/i);
 });
 
-test('build without --final ignores approval entirely', () => {
-  assert.equal(run(['build', 'ok.md'], dir).status, 0);
+test('build refuses a stale approval', () => {
+  writeFileSync(join(dir, 'appr.md'), approve(MINIMAL, '2026-09-04'));
+  assert.equal(run(['build', 'appr.md'], dir).status, 0, 'approved build works');
+  // one character of note text changes, and the approval no longer describes the file
+  writeFileSync(join(dir, 'appr.md'), approve(MINIMAL, '2026-09-04').replace('20:00.', '20:05.'));
+  const { status, out } = run(['build', 'appr.md'], dir);
+  assert.equal(status, 1, out);
+  assert.match(out, /changed since approval|stale/i);
 });
 
-
-
-test('the emitted materi file contains no speaker notes on disk', () => {
-  run(['build', 'ok.md'], dir);
-  const materi = readFileSync(join(dir, 'ok-mahasiswa.html'), 'utf8');
-  assert.ok(!materi.includes('Katakan sesi selesai'), 'note text absent from the written file');
-  assert.ok(!/class="notes"/.test(materi));
-  assert.ok(!/id="pane"/.test(materi), 'no notes pane in the written file');
+test('a stray --final is a harmless no-op, not an error', () => {
+  writeFileSync(join(dir, 'appr2.md'), approve(MINIMAL, '2026-09-04'));
+  const { status, out } = run(['build', '--final', 'appr2.md'], dir);
+  assert.equal(status, 0, out);
 });
 
-test('out-stem sets the emitted filenames, so a republish keeps its URL', () => {
-  writeFileSync(join(dir, 'named.md'), MINIMAL.replace('session: 1', 'session: 1\nout-stem: sesi01-deck'));
+test('build emits one file, named from course + session — no separate materi html', () => {
+  // Sesi 1-4's own decks are named "Sesi NN - Slides.html" inside their course folder; the
+  // course name is added so the file self-identifies once copied out of that folder. The
+  // student deliverable stays Materi.md (via `render`) — build never touches it.
+  writeFileSync(join(dir, 'named.md'), approve(MINIMAL.replace('course: Business Intelligence Systems', 'course: Web Application Development'), '2026-09-04'));
   const { status, out } = run(['build', 'named.md'], dir);
   assert.equal(status, 0, out);
-  assert.ok(existsSync(join(dir, 'sesi01-deck-pengampu.html')), 'naskah uses out-stem');
-  assert.ok(existsSync(join(dir, 'sesi01-deck-mahasiswa.html')), 'materi uses out-stem');
+  assert.ok(existsSync(join(dir, 'Web Application Development - Sesi 01 - Slides.html')), 'named from course + session');
+  assert.ok(!existsSync(join(dir, 'Web Application Development - Sesi 01 - Materi Mahasiswa.html')), 'no separate materi html');
+});
+
+test('the built deck carries speaker notes — it is the instructor file, kept local', () => {
+  writeFileSync(join(dir, 'appr3.md'), approve(MINIMAL, '2026-09-04'));
+  run(['build', 'appr3.md'], dir);
+  const html = readFileSync(join(dir, SLIDES_NAME), 'utf8');
+  assert.ok(html.includes('Katakan sesi selesai'), 'note text present — this file is the naskah, not a public materi');
 });
 
 // \u2500\u2500 DUR + restamp \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500

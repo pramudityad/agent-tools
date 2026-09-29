@@ -1,21 +1,21 @@
 # rps-deck
 
-Builds instructor (**naskah**) and student (**materi**) session decks from one Markdown file
-the lecturer authors and reviews. Course-agnostic: the precondition is an **RPS contract**,
-not a named course.
+Builds an instructor (**naskah**) session deck, and separately a student (**materi**)
+handout, from one Markdown file the lecturer authors and reviews. Course-agnostic: the
+precondition is an **RPS contract**, not a named course.
 
 Zero dependencies, Node built-ins only.
 
 ```sh
-node deck.mjs session <n> <rps.md>            # read the RPS contract for one session
-node deck.mjs restamp  <naskah.md>            # recompute every clock stamp from DUR
-node deck.mjs check    <naskah.md>            # validate
-node deck.mjs render   <naskah.md>            # emit Sesi NN - Materi.md
-node deck.mjs approve  <naskah.md>            # stamp approval, bound to a content hash
-node deck.mjs build    [--final] <naskah.md>  # emit both projectable decks
+node deck.mjs session <n> <rps.md>    # read the RPS contract for one session
+node deck.mjs restamp  <naskah.md>    # recompute every clock stamp from DUR
+node deck.mjs check    <naskah.md>    # validate
+node deck.mjs render   <naskah.md>    # emit Sesi NN - Materi.md (student handout)
+node deck.mjs approve  <naskah.md>    # stamp approval, bound to a content hash
+node deck.mjs build    <naskah.md>    # requires approval; emits "<course> - Sesi NN - Slides.html/.pdf"
 node deck.mjs scan     <file> <map.json>      # residual identifier scan
 node deck.mjs sanitise <src> <map.json> <dst> [--section "A|B"] [--lines 20-90]
-node test.mjs                                  # 59 tests, hermetic
+node test.mjs                                  # 61 tests, hermetic
 ```
 
 Install the agent-facing pointers — Claude, pi, Codex and Hermes, whichever are present:

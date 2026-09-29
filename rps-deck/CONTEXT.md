@@ -13,13 +13,14 @@ a session note. Course-agnostic: this tool needs an RPS contract, not a named co
 _Avoid_: syllabus (loses the approval status that makes it binding), RPS draft.
 
 **Session note**:
-The lecturer's weekly lesson plan (`Week NN - ….md`). Rich in teaching design, not
+The lecturer's per-sesi lesson plan (`Sesi NN - <topic>.md`; formerly `Week NN`). Rich in teaching design, not
 authoritative on assessment. Where it disagrees with the RPS contract, it loses.
 _Avoid_: lesson plan (also names the in-session timing table specifically), syllabus.
 
 **Slot**:
 The real wall-clock length of a session. The constraint that forces every cut. Not what the
-session note claims: all 48 notes declare a 150-minute plan against a 105-minute slot.
+session note claims: every note declares a 150-minute plan, but the real slot differs per course
+and is held in one place `check` compares a naskah against — never re-typed from a note.
 _Avoid_: duration, session length (both read as the note's stated figure).
 
 **Cut ledger**:
@@ -34,9 +35,8 @@ directives together.
 _Avoid_: spec, manifest, script, prompt, instructor deck.
 
 **Materi**:
-`Sesi NN - Materi.md` and the student HTML — generated from the naskah, never edited.
-Safe to hand out because the notes were never written into it, not because they are hidden
-(ADR 0002).
+`Sesi NN - Materi.md` — generated from the naskah, never edited. Safe to hand out because
+the notes were never written into it, not because they are hidden (ADR 0002).
 _Avoid_: student deck, public version, redacted version.
 
 **DUR**:
@@ -56,7 +56,7 @@ _Avoid_: tag (reserved for the on-slide `HOLD`/`FLAG` chips), directive, shortco
 
 **FLAG**:
 A slide-level declaration that something is unresolved — most often a number nobody has
-measured yet. `build` warns; `build --final` refuses.
+measured yet. `build` refuses outright while one is open.
 _Avoid_: TODO (reserved for the inline marker that renders the placeholder chip), blocker.
 
 **Residual scan**:

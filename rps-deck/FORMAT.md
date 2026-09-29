@@ -82,6 +82,13 @@ A marker is **a word plus a space, applied to the segment it starts**. Segments 
 | `TODO` | segment | unmeasured placeholder chip; pair with `FLAG` |
 | `HI` | segment | accent span |
 | `MARK` | a table cell of its own | emphasises that row |
+| `DIAGRAM <name>` | line, own KONTEN entry | a hand-built inline SVG from a fixed library |
+
+`DIAGRAM` is not a general diagramming feature — it names one of a small, fixed set of
+inline SVGs defined in `DIAGRAMS` in `deck.mjs` (currently `class-box`, `relationships-5`,
+`deployment-cutover`, `traceability-flow`). An unknown name fails at render time naming the
+bad name, not silently rendering nothing. Add a new diagram by adding a function to that
+object — there is no template language, each one is hand-drawn SVG.
 
 Plain Markdown carries the rest: tables, bullet and numbered lists, `**bold**`, `*italic*`,
 `` `code` ``, `~~strikethrough~~`.

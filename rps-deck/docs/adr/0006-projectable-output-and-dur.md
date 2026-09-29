@@ -1,6 +1,7 @@
 # 0006 — The HTML is a deck, and DUR owns the clock
 
-**Status:** accepted · 2026-09-04
+**Status:** accepted · 2026-09-04 — the materi HTML variant this describes is retired by
+ADR 0007; `DUR` and the projectable-deck decision below stand unchanged.
 
 ## Context
 

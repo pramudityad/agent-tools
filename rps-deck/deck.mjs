@@ -5,9 +5,10 @@
 // The spec `.md` is the single source of truth (ADR 0001): everything rendered is
 // derived from it, never retyped alongside it.
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 // ── spec grammar ──────────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ export function parseSpec(text) {
 
 // Line-leading ALL-CAPS tokens are structure, not prose. An unrecognised one is a typo
 // that would otherwise render as literal text on a slide, so it fails the parse instead.
-const MARKERS = new Set(['LEAD', 'FINE', 'SPLIT', 'STRUCK', 'PANEL', 'NUM', 'LABEL', 'VEIL', 'TODO', 'HI', 'MARK']);
+const MARKERS = new Set(['LEAD', 'FINE', 'SPLIT', 'STRUCK', 'PANEL', 'NUM', 'LABEL', 'VEIL', 'TODO', 'HI', 'MARK', 'DIAGRAM', 'IMAGE']);
 const MARKER_RE = /^\s*([A-Z][A-Z-]{2,})\b\s*:?/;
 
 function unknownMarkers(konten) {
@@ -328,8 +329,242 @@ function renderPanels(lines) {
   return `<div class="split">${panels.map((p) => `${p}</div>`).join('')}</div>`;
 }
 
+// A fixed, hand-drawn library — not a general diagramming feature. Each name is an inline
+// SVG built once here rather than a screenshot or external image file, so it stays a plain
+// text diff in the naskah and never depends on where a PNG happens to live.
+function figure(svg, caption, label) {
+  return `<figure class="diagram"><svg viewBox="${svg.viewBox}" role="img" aria-label="${escapeHtml(label)}">${svg.body}</svg>` +
+    `<figcaption>${escapeHtml(caption)}</figcaption></figure>`;
+}
+
+const DIAGRAMS = {
+  'class-box': () => figure({
+    viewBox: '0 0 320 170',
+    body: `<rect x="4" y="4" width="312" height="162" fill="var(--card)" stroke="var(--navy)" stroke-width="2"/>` +
+      `<line x1="4" y1="46" x2="316" y2="46" stroke="var(--navy)" stroke-width="2"/>` +
+      `<line x1="4" y1="108" x2="316" y2="108" stroke="var(--navy)" stroke-width="2"/>` +
+      `<text x="160" y="30" text-anchor="middle" font-weight="700" font-size="17" fill="var(--ink)">PurchaseRequest</text>` +
+      `<text x="16" y="66" font-size="13" fill="var(--ink)">- id: int</text>` +
+      `<text x="16" y="86" font-size="13" fill="var(--ink)">- status: string</text>` +
+      `<text x="16" y="128" font-size="13" fill="var(--ink)">+ submit(): void</text>` +
+      `<text x="16" y="148" font-size="13" fill="var(--ink)">+ approve(): void</text>`,
+  }, 'name / attribute / operation', 'UML class box with three compartments'),
+
+  'relationships-5': () => {
+    const cols = [
+      { type: 'assoc', label: 'Association' },
+      { type: 'agg', label: 'Aggregation' },
+      { type: 'comp', label: 'Composition' },
+      { type: 'gen', label: 'Generalisation' },
+      { type: 'dep', label: 'Dependency' },
+    ];
+    const w = 124;
+    const body = cols.map((col, i) => {
+      const x = i * w;
+      const lx1 = x + 26, lx2 = x + 92, ly = 40;
+      let parts = `<rect x="${x + 8}" y="30" width="20" height="20" fill="var(--card)" stroke="var(--navy)" stroke-width="1.6"/>` +
+        `<rect x="${x + 96}" y="30" width="20" height="20" fill="var(--card)" stroke="var(--navy)" stroke-width="1.6"/>` +
+        `<line x1="${lx1}" y1="${ly}" x2="${lx2}" y2="${ly}" stroke="var(--ink)" stroke-width="2"${col.type === 'dep' ? ' stroke-dasharray="5,4"' : ''}/>`;
+      if (col.type === 'agg' || col.type === 'comp') {
+        const cx = lx2 - 10;
+        parts += `<polygon points="${cx - 9},${ly} ${cx},${ly - 6} ${cx + 9},${ly} ${cx},${ly + 6}" ` +
+          `fill="${col.type === 'comp' ? 'var(--navy)' : 'var(--card)'}" stroke="var(--navy)" stroke-width="1.6"/>`;
+      } else if (col.type === 'gen') {
+        parts += `<polygon points="${lx2 - 14},${ly - 7} ${lx2 - 14},${ly + 7} ${lx2},${ly}" ` +
+          `fill="var(--card)" stroke="var(--navy)" stroke-width="1.6"/>`;
+      } else if (col.type === 'dep') {
+        parts += `<polyline points="${lx2 - 10},${ly - 6} ${lx2},${ly} ${lx2 - 10},${ly + 6}" ` +
+          `fill="none" stroke="var(--ink)" stroke-width="2"/>`;
+      }
+      parts += `<text x="${x + w / 2}" y="70" text-anchor="middle" font-size="12" fill="var(--muted)" font-family="var(--mono)">${col.label}</text>`;
+      return parts;
+    }).join('');
+    return figure({ viewBox: `0 0 ${cols.length * w} 84`, body }, 'notation for each of the five relationships', 'Five UML relationship notations side by side');
+  },
+
+  'deployment-cutover': () => {
+    const service = (x, w, text) => `<rect x="${x}" y="14" width="${w}" height="34" rx="6" fill="var(--card)" stroke="var(--navy)" stroke-width="1.6"/>` +
+      `<text x="${x + w / 2}" y="35" text-anchor="middle" font-size="11.5" fill="var(--ink)">${text}</text>`;
+    const db = (x, w, text, warn) => `<rect x="${x}" y="150" width="${w}" height="38" rx="6" fill="${warn ? 'var(--amber-soft)' : 'var(--green-soft)'}" stroke="${warn ? 'var(--amber)' : 'var(--green)'}" stroke-width="1.6"/>` +
+      `<text x="${x + w / 2}" y="173" text-anchor="middle" font-size="11.5" fill="var(--ink)">${text}</text>`;
+    const link = (x1, x2, warn) => `<line x1="${x1}" y1="48" x2="${x2}" y2="150" stroke="${warn ? 'var(--amber)' : 'var(--green)'}" stroke-width="2"/>`;
+    const before = service(6, 96, 'NusaPay-service') + service(112, 96, 'billing-service') + service(218, 90, 'OMS') +
+      db(6, 302, 'shared-db-instance-01 (shared)', true) +
+      link(54, 90, true) + link(160, 150, true) + link(263, 220, true) +
+      `<text x="159" y="196" text-anchor="middle" font-size="11" fill="var(--amber)" font-family="var(--mono)">BEFORE — noisy neighbour</text>`;
+    const ox = 360;
+    const after = service(ox + 6, 110, 'NusaPay-service') + service(ox + 126, 96, 'billing-service') + service(ox + 232, 76, 'OMS') +
+      db(ox + 6, 110, 'nusapay-db (NEW)', false) + db(ox + 126, 182, 'shared-db-instance-01', false) +
+      link(ox + 61, ox + 61, false) + link(ox + 174, ox + 200, false) + link(ox + 270, ox + 260, false) +
+      `<text x="${ox + 159}" y="196" text-anchor="middle" font-size="11" fill="var(--green)" font-family="var(--mono)">AFTER — isolated</text>`;
+    return figure({ viewBox: '0 0 720 210', body: before + after }, 'NusaPay database cutover — before (shared instance) / after (dedicated instance)', 'Before and after deployment topology for the NusaPay database cutover');
+  },
+
+  'traceability-flow': () => {
+    const steps = [
+      { label: 'Stakeholder Need', now: true },
+      { label: 'Requirement', now: true },
+      { label: 'Design', now: false },
+      { label: 'Test', now: false },
+    ];
+    const w = 130, h = 60, gap = 40, y = 30;
+    const body = steps.map((s, i) => {
+      const x = i * (w + gap) + 10;
+      const box = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${s.now ? 'var(--teal-soft)' : 'var(--bg)'}" ` +
+        `stroke="var(--navy)" stroke-width="1.8" stroke-dasharray="${s.now ? 'none' : '5,4'}"/>` +
+        `<text x="${x + w / 2}" y="${y + h / 2 + 5}" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">${s.label}</text>` +
+        `<text x="${x + w / 2}" y="${y + h + 20}" text-anchor="middle" font-size="10.5" fill="var(--muted)" font-family="var(--mono)">${s.now ? 'malam ini' : 'Sesi 12'}</text>`;
+      const arrow = i < steps.length - 1
+        ? `<line x1="${x + w}" y1="${y + h / 2}" x2="${x + w + gap - 6}" y2="${y + h / 2}" stroke="var(--navy)" stroke-width="2"/>` +
+          `<polygon points="${x + w + gap - 6},${y + h / 2 - 5} ${x + w + gap + 4},${y + h / 2} ${x + w + gap - 6},${y + h / 2 + 5}" fill="var(--navy)"/>`
+        : '';
+      return box + arrow;
+    }).join('');
+    return figure({ viewBox: `0 0 ${steps.length * (w + gap) + 10} 120`, body }, 'need → requirement → design → test', 'Traceability flow from stakeholder need to test');
+  },
+
+  'cube-three-axis': () => figure({
+    viewBox: '0 0 980 220',
+    body: `<line x1="490" y1="190" x2="490" y2="30" stroke="var(--navy)" stroke-width="2.5"/>` +
+      `<polygon points="490,30 483,44 497,44" fill="var(--navy)"/>` +
+      `<text x="500" y="36" font-size="15" font-weight="700" fill="var(--navy)">Produk</text>` +
+      `<text x="500" y="56" font-size="12.5" fill="var(--muted)">Kopi · Snack</text>` +
+      `<line x1="490" y1="190" x2="880" y2="190" stroke="var(--navy)" stroke-width="2.5"/>` +
+      `<polygon points="880,190 866,183 866,197" fill="var(--navy)"/>` +
+      `<text x="770" y="212" font-size="15" font-weight="700" fill="var(--navy)">Waktu</text>` +
+      `<text x="742" y="176" font-size="12.5" fill="var(--muted)">Jan · Feb · Mar</text>` +
+      `<line x1="490" y1="190" x2="160" y2="80" stroke="var(--navy)" stroke-width="2.5"/>` +
+      `<polygon points="160,80 172,82 166,95" fill="var(--navy)"/>` +
+      `<text x="70" y="70" font-size="15" font-weight="700" fill="var(--navy)">Wilayah</text>` +
+      `<text x="60" y="90" font-size="12.5" fill="var(--muted)">Bandung · Jakarta</text>` +
+      `<circle cx="340" cy="130" r="11" fill="var(--teal)"/>` +
+      `<circle cx="340" cy="130" r="11" fill="none" stroke="var(--teal)" stroke-width="6" opacity=".25"/>` +
+      `<rect x="290" y="150" width="240" height="40" rx="10" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<text x="410" y="175" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="var(--navy-2)">Kopi × Feb × Bandung = 42</text>`,
+  }, 'tiga sumbu bertemu di satu sel contoh', 'Diagram kubus tiga sumbu: Produk, Waktu, Wilayah, dengan satu sel disorot bernilai 42'),
+
+  'hierarchy-tree': () => {
+    const col = (cx, title, rows) => {
+      let body = `<text x="${cx}" y="18" text-anchor="middle" font-size="13" font-weight="700" fill="var(--teal)">${title}</text>`;
+      rows.forEach((r, i) => {
+        const y = 28 + i * 48;
+        const gap = r.gap
+          ? `<line x1="${cx}" y1="${y - 14}" x2="${cx}" y2="${y}" stroke="var(--red)" stroke-width="2" stroke-dasharray="4 4"/>`
+          : i > 0 ? `<line x1="${cx}" y1="${y - 14}" x2="${cx}" y2="${y}" stroke="var(--border)"/>` : '';
+        body += gap +
+          `<rect x="${cx - 90}" y="${y}" width="180" height="34" rx="8" fill="${r.gap ? 'var(--red-soft)' : 'var(--card)'}" ` +
+          `stroke="${r.gap ? 'var(--red)' : 'var(--border)'}"${r.gap ? ' stroke-dasharray="4 4"' : ''}/>` +
+          `<text x="${cx}" y="${y + 21}" text-anchor="middle" font-size="13" fill="${r.gap ? 'var(--red)' : 'var(--ink)'}">${r.label}</text>`;
+      });
+      return body;
+    };
+    const body = col(170, 'TANGGAL', [{ label: 'Tahun' }, { label: 'Kuartal' }, { label: 'Bulan' }, { label: 'Hari' }]) +
+      col(490, 'GEOGRAFI', [{ label: 'Negara' }, { label: 'Provinsi (DKI Jakarta)' }, { label: 'Kabupaten — tidak ada', gap: true }, { label: 'Kota' }]) +
+      col(810, 'PRODUK', [{ label: 'Kategori' }, { label: 'Subkategori' }, { label: 'SKU' }]);
+    return figure({ viewBox: '0 0 980 230', body }, 'geografi punya cabang hilang untuk DKI Jakarta', 'Tiga pohon hierarki: Tanggal, Geografi (dengan cabang Kabupaten hilang untuk DKI Jakarta), dan Produk');
+  },
+
+  'molap-rolap-holap': () => figure({
+    viewBox: '0 0 980 130',
+    body: `<rect x="70" y="15" width="46" height="16" rx="4" fill="var(--teal)"/>` +
+      `<rect x="70" y="34" width="46" height="16" rx="4" fill="var(--teal)" opacity=".8"/>` +
+      `<rect x="70" y="53" width="46" height="16" rx="4" fill="var(--teal)" opacity=".6"/>` +
+      `<circle cx="93" cy="15" r="9" fill="none" stroke="var(--navy)" stroke-width="2.5"/>` +
+      `<rect x="88" y="13" width="10" height="9" fill="var(--navy)"/>` +
+      `<text x="93" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="var(--navy)">MOLAP</text>` +
+      `<text x="93" y="110" text-anchor="middle" font-size="12" fill="var(--muted)">disimpan duluan</text>` +
+      `<rect x="440" y="40" width="18" height="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<rect x="460" y="40" width="18" height="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<rect x="440" y="54" width="18" height="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<rect x="460" y="54" width="18" height="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<circle cx="500" cy="30" r="14" fill="none" stroke="var(--navy)" stroke-width="3"/>` +
+      `<line x1="510" y1="40" x2="522" y2="52" stroke="var(--navy)" stroke-width="3.5" stroke-linecap="round"/>` +
+      `<text x="470" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="var(--navy)">ROLAP</text>` +
+      `<text x="470" y="110" text-anchor="middle" font-size="12" fill="var(--muted)">dihitung tiap ditanya</text>` +
+      `<rect x="800" y="15" width="46" height="16" rx="4" fill="var(--teal)" opacity=".8"/>` +
+      `<rect x="800" y="34" width="46" height="16" rx="4" fill="var(--teal)" opacity=".5"/>` +
+      `<rect x="860" y="15" width="18" height="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<rect x="880" y="15" width="18" height="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<rect x="860" y="29" width="18" height="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<rect x="880" y="29" width="18" height="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<line x1="850" y1="10" x2="850" y2="55" stroke="var(--border)" stroke-dasharray="3 3"/>` +
+      `<text x="850" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="var(--navy)">HOLAP</text>` +
+      `<text x="850" y="110" text-anchor="middle" font-size="12" fill="var(--muted)">sebagian-sebagian</text>`,
+  }, 'MOLAP tersegel, ROLAP dihitung ulang, HOLAP campuran', 'Tiga ikon: MOLAP tumpukan tersegel, ROLAP kaca pembesar di atas tabel, HOLAP gabungan keduanya'),
+
+  'semantic-layer-timeline': () => figure({
+    viewBox: '0 0 980 110',
+    body: `<rect x="20" y="15" width="280" height="70" rx="12" fill="var(--card)" stroke="var(--border)"/>` +
+      `<text x="160" y="42" text-anchor="middle" font-size="13" font-weight="700" fill="var(--navy)">Dulu: MOLAP</text>` +
+      `<text x="160" y="62" text-anchor="middle" font-size="11.5" fill="var(--muted)">cepat, tapi kaku</text>` +
+      `<polygon points="305,50 330,42 330,58" fill="var(--border)"/>` +
+      `<rect x="350" y="15" width="280" height="70" rx="12" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<text x="490" y="42" text-anchor="middle" font-size="13" font-weight="700" fill="var(--navy-2)">Sekarang: ROLAP menang</text>` +
+      `<text x="490" y="62" text-anchor="middle" font-size="11.5" fill="var(--teal)">warehouse sudah cukup cepat</text>` +
+      `<polygon points="635,50 660,42 660,58" fill="var(--border)"/>` +
+      `<rect x="680" y="15" width="280" height="70" rx="12" fill="var(--amber-soft)" stroke="var(--amber)"/>` +
+      `<text x="820" y="42" text-anchor="middle" font-size="13" font-weight="700" fill="#8a5a00">Yang kembali</text>` +
+      `<text x="820" y="62" text-anchor="middle" font-size="11.5" fill="#8a5a00">satu definisi metrik bersama</text>`,
+  }, 'MOLAP → ROLAP menang → definisi metrik bersama kembali', 'Garis waktu tiga tahap: dulu MOLAP, sekarang ROLAP menang, yang kembali adalah definisi metrik bersama'),
+
+  'rollup-bars': () => figure({
+    viewBox: '0 0 980 230',
+    body: `<rect x="90" y="123" width="90" height="67" fill="var(--teal)"/><text x="135" y="118" text-anchor="middle" fill="var(--navy)" font-weight="700" font-size="11.5">120</text><text x="135" y="205" text-anchor="middle" font-family="var(--mono)" font-size="11.5" fill="var(--muted)">Jawa,<tspan x="135" dy="12">Bandung</tspan></text>` +
+      `<rect x="210" y="145" width="90" height="45" fill="var(--teal)"/><text x="255" y="140" text-anchor="middle" fill="var(--navy)" font-weight="700" font-size="11.5">80</text><text x="255" y="205" text-anchor="middle" font-family="var(--mono)" font-size="11.5" fill="var(--muted)">Jawa,<tspan x="255" dy="12">Semarang</tspan></text>` +
+      `<rect x="330" y="78" width="90" height="112" fill="var(--amber)"/><text x="375" y="73" text-anchor="middle" fill="var(--navy)" font-weight="700" font-size="11.5">200</text><text x="375" y="205" text-anchor="middle" font-family="var(--mono)" font-size="11.5" fill="var(--muted)">Jawa,<tspan x="375" dy="12">subtotal</tspan></text>` +
+      `<rect x="470" y="162" width="90" height="28" fill="var(--teal)"/><text x="515" y="157" text-anchor="middle" fill="var(--navy)" font-weight="700" font-size="11.5">50</text><text x="515" y="205" text-anchor="middle" font-family="var(--mono)" font-size="11.5" fill="var(--muted)">Bali,<tspan x="515" dy="12">Denpasar</tspan></text>` +
+      `<rect x="590" y="162" width="90" height="28" fill="var(--amber)"/><text x="635" y="157" text-anchor="middle" fill="var(--navy)" font-weight="700" font-size="11.5">50</text><text x="635" y="205" text-anchor="middle" font-family="var(--mono)" font-size="11.5" fill="var(--muted)">Bali,<tspan x="635" dy="12">subtotal</tspan></text>` +
+      `<rect x="740" y="50" width="110" height="140" fill="var(--red)"/><text x="795" y="45" text-anchor="middle" fill="var(--navy)" font-weight="700" font-size="11.5">250</text><text x="795" y="205" text-anchor="middle" font-family="var(--mono)" font-size="11.5" fill="var(--muted)">Grand<tspan x="795" dy="12">total</tspan></text>` +
+      `<line x1="60" y1="190" x2="920" y2="190" stroke="var(--border)" stroke-width="1.5"/>`,
+  }, 'dua baris data, dua subtotal region, satu grand total', 'Grafik batang hasil ROLLUP: dua baris data asli, dua subtotal region, satu grand total'),
+
+  'preagg-scale': () => figure({
+    viewBox: '0 0 980 150',
+    body: `<polygon points="490,20 460,60 520,60" fill="var(--navy)"/>` +
+      `<rect x="484" y="60" width="12" height="55" fill="var(--navy)"/>` +
+      `<line x1="220" y1="45" x2="760" y2="45" stroke="var(--navy)" stroke-width="4"/>` +
+      `<line x1="220" y1="45" x2="220" y2="85" stroke="var(--muted)" stroke-width="2"/>` +
+      `<ellipse cx="220" cy="95" rx="85" ry="14" fill="var(--teal-soft)" stroke="var(--teal)"/>` +
+      `<text x="220" y="99" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--navy-2)">Kecepatan</text>` +
+      `<line x1="760" y1="45" x2="760" y2="85" stroke="var(--muted)" stroke-width="2"/>` +
+      `<ellipse cx="760" cy="95" rx="150" ry="14" fill="var(--amber-soft)" stroke="var(--amber)"/>` +
+      `<text x="760" y="99" text-anchor="middle" font-size="12.5" font-weight="700" fill="#8a5a00">Kesegaran data + kerja jaga-jaga</text>` +
+      `<text x="490" y="140" text-anchor="middle" font-size="12" fill="var(--muted)">Pra-agregasi menang hanya kalau pola stabil dan tabel dasarnya besar</text>`,
+  }, 'kecepatan vs kesegaran data + kerja jaga-jaga', 'Diagram timbangan: kecepatan di satu sisi, kesegaran data dan kerja jaga-jaga di sisi lain'),
+
+  'mvc-architecture': () => {
+    const box = (x, y, w, h, label, fill) =>
+      `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${fill}" stroke="var(--navy)" stroke-width="1.8"/>` +
+      `<text x="${x + w / 2}" y="${y + h / 2 + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">${label}</text>`;
+    const arrow = (x1, y1, x2, y2, label, dashed) => {
+      const angle = Math.atan2(y2 - y1, x2 - x1);
+      const ah = 9;
+      const ax1 = x2 - ah * Math.cos(angle - Math.PI / 6);
+      const ay1 = y2 - ah * Math.sin(angle - Math.PI / 6);
+      const ax2 = x2 - ah * Math.cos(angle + Math.PI / 6);
+      const ay2 = y2 - ah * Math.sin(angle + Math.PI / 6);
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--teal)" stroke-width="2"${dashed ? ' stroke-dasharray="5,4"' : ''}/>` +
+        `<polygon points="${x2},${y2} ${ax1},${ay1} ${ax2},${ay2}" fill="var(--teal)"/>` +
+        `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="var(--mono)">${label}</text>`;
+    };
+    const body =
+      box(20, 125, 110, 50, 'User', 'var(--card)') +
+      box(265, 15, 150, 50, 'Controller', 'var(--teal-soft)') +
+      box(90, 215, 150, 50, 'Model', 'var(--card)') +
+      box(430, 215, 150, 50, 'View', 'var(--card)') +
+      arrow(100, 122, 268, 62, 'request', false) +
+      arrow(310, 65, 195, 213, 'manipulates', false) +
+      arrow(378, 65, 495, 213, 'selects', false) +
+      arrow(240, 240, 428, 240, 'updates', true) +
+      arrow(432, 258, 128, 165, 'response', false);
+    return figure({ viewBox: '0 0 640 300', body },
+      'User mengirim request ke Controller; Controller mengorkestrasi Model dan memilih View; Model memperbarui View; View merespons User',
+      'Diagram arsitektur MVC generik: User, Controller, Model, View dengan empat panah alur request/manipulates/selects/updates/response');
+  },
+};
+
 /** KONTEN → HTML. Markers become structure; everything else is Markdown. */
-export function renderKonten(konten) {
+export function renderKonten(konten, { baseDir } = {}) {
   const lines = konten.split('\n');
   const out = [];
   let index = 0;
@@ -376,6 +611,36 @@ export function renderKonten(konten) {
       continue;
     }
 
+    if (text.startsWith('DIAGRAM ') || text.startsWith('DIAGRAM:')) {
+      const name = text.replace(/^DIAGRAM:?\s*/, '').trim();
+      const build = DIAGRAMS[name];
+      if (!build) throw new Error(`unknown DIAGRAM "${name}" — add it to DIAGRAMS in deck.mjs or fix the name`);
+      out.push(build());
+      index += 1;
+      continue;
+    }
+
+    // A real (raster) image, unlike DIAGRAM's hand-coded SVG library. Path is relative to
+    // the naskah's own directory, so the source stays a lightweight pointer — the base64
+    // blob only exists in the built HTML, never in the .md diff. `IMAGE path | caption`.
+    if (text.startsWith('IMAGE ') || text.startsWith('IMAGE:')) {
+      const rest = text.replace(/^IMAGE:?\s*/, '').trim();
+      const [relPath, ...capParts] = rest.split('|').map((s) => s.trim());
+      const caption = capParts.join('|').trim();
+      if (!baseDir) throw new Error(`IMAGE "${relPath}" needs a baseDir — only resolvable during build()`);
+      const filePath = resolve(baseDir, relPath);
+      if (!existsSync(filePath)) throw new Error(`IMAGE file not found: ${filePath}`);
+      const ext = filePath.split('.').pop().toLowerCase();
+      const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', svg: 'image/svg+xml' }[ext];
+      if (!mime) throw new Error(`IMAGE "${relPath}" — unsupported extension .${ext}`);
+      const data = readFileSync(filePath).toString('base64');
+      const alt = escapeHtml(caption || basename(relPath));
+      out.push(`<figure class="diagram"><img src="data:${mime};base64,${data}" alt="${alt}" style="display:block;max-width:100%;height:auto"/>` +
+        (caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : '') + `</figure>`);
+      index += 1;
+      continue;
+    }
+
     if (text.startsWith('LEAD ') || text.startsWith('LEAD:')) {
       out.push(`<p class="lead">${inline(text.replace(/^LEAD:?\s*/, ''))}</p>`);
       index += 1;
@@ -400,151 +665,139 @@ export function renderKonten(konten) {
 // the HTML is the thing that goes on the projector (ADR 0006).
 
 const CSS = `
-*,*::before,*::after{box-sizing:border-box}
+*{box-sizing:border-box}
 :root{
-  --ground:#F6F7F9; --surface:#FFFFFF; --surface-2:#EEF1F5;
-  --ink:#16202B; --ink-2:#5A6675; --ink-3:#8B95A1;
-  --rule:#DDE2E8; --rule-2:#C6CED7;
-  --accent:#0E6E6E; --accent-soft:#DCEDEC;
-  --flag:#8A5A00; --flag-soft:#F7EBD4;
-  --note:#3B4B8C; --note-soft:#E8EBF6;
-  --bad:#8C2F2F; --good:#1F6B3B;
-  --serif:Charter,"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
-  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --navy:#0f2a44; --navy-2:#163a5f; --teal:#0e6e6e; --teal-soft:#dcefed;
+  --amber:#b45309; --amber-soft:#fdf3e3; --red:#b3392f; --red-soft:#fbeae9;
+  --green:#1f6b3b; --green-soft:#e6f2ea;
+  --bg:#f6f7f9; --card:#ffffff; --ink:#0f172a; --muted:#5a6675;
+  --border:#e2e8f0; --radius:16px;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){
-    --ground:#10151B; --surface:#171E26; --surface-2:#1E2731;
-    --ink:#E6EBF0; --ink-2:#A3AEBA; --ink-3:#78838F;
-    --rule:#2A333D; --rule-2:#3A4552;
-    --accent:#4FC4C0; --accent-soft:#12312F;
-    --flag:#D9A441; --flag-soft:#33270F;
-    --note:#8FA0E8; --note-soft:#1B2138;
-    --bad:#E08585; --good:#6FC28E;
-  }
-}
-:root[data-theme="dark"]{
-  --ground:#10151B; --surface:#171E26; --surface-2:#1E2731;
-  --ink:#E6EBF0; --ink-2:#A3AEBA; --ink-3:#78838F;
-  --rule:#2A333D; --rule-2:#3A4552;
-  --accent:#4FC4C0; --accent-soft:#12312F;
-  --flag:#D9A441; --flag-soft:#33270F;
-  --note:#8FA0E8; --note-soft:#1B2138;
-  --bad:#E08585; --good:#6FC28E;
-}
-html,body{height:100%}
-body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
-  font-size:clamp(16px,1.35vw,22px);line-height:1.5;-webkit-font-smoothing:antialiased;
-  overflow:hidden}
-.deck{position:fixed;inset:0}
-.slide{position:absolute;inset:0;display:none;padding:clamp(28px,5vh,72px) clamp(24px,6vw,96px)
-  calc(clamp(28px,5vh,72px) + 44px);overflow-y:auto}
-.slide.live{display:flex;flex-direction:column;justify-content:center}
-body.pane-on .slide{padding-bottom:calc(38vh + 44px)}
-.inner{width:100%;max-width:1060px;margin:0 auto}
-.eyebrow{font-family:var(--mono);font-size:.6em;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--accent);margin:0 0 .8em}
-h1{font-family:var(--serif);font-size:2.1em;line-height:1.1;margin:0 0 .3em;font-weight:600;
-  text-wrap:balance;letter-spacing:-.01em}
-h2{font-family:var(--serif);font-size:1.55em;line-height:1.15;margin:0 0 .55em;font-weight:600;
-  text-wrap:balance}
-.tags{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 1em}
-.tag{font-family:var(--mono);font-size:.5em;letter-spacing:.1em;text-transform:uppercase;
-  padding:4px 9px;border-radius:2px;background:var(--surface-2);color:var(--ink-2)}
-.tag.hold{background:var(--accent-soft);color:var(--accent)}
-.tag.flag{background:var(--flag-soft);color:var(--flag)}
-.tag.time{background:var(--note-soft);color:var(--note);font-variant-numeric:tabular-nums}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial}
+.topbar{position:sticky;top:0;z-index:50;background:var(--navy);color:#e2e8f0;padding:9px 18px;
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  box-shadow:0 2px 10px rgba(0,0,0,.2)}
+.topbar .left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.topbar .dot{width:9px;height:9px;border-radius:50%;background:var(--teal)}
+.topbar h1{font-size:12.5px;font-weight:600;margin:0;letter-spacing:.02em}
+.topbar .meta{font-size:11.5px;color:#aebcd0;font-family:var(--mono)}
+.topbar .right{display:flex;align-items:center;gap:8px}
+.btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);color:#e2e8f0;
+  font-size:11.5px;padding:5px 11px;border-radius:999px;cursor:pointer;font-weight:500}
+.btn:hover{background:rgba(255,255,255,.2)}
+.btn.on{background:var(--teal);border-color:var(--teal);color:#fff}
+main{max-width:1080px;margin:0 auto;padding:0 20px 90px}
+.slide{display:none;min-height:88vh;padding:46px 18px 30px}
+.slide.on{display:block}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--teal);margin:0 0 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.kicker .min{color:var(--amber)}
+.kicker .hold{color:var(--navy-2);background:var(--teal-soft);border:1px solid #bfdcdb;
+  padding:2px 8px;border-radius:999px;font-size:10px;letter-spacing:.1em}
+.kicker .flagtag{color:#8a5a00;background:var(--amber-soft);border:1px solid #f0d6ab;
+  padding:2px 8px;border-radius:999px;font-size:10px;letter-spacing:.06em}
+h1,h2{font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+h2{margin:0 0 18px;font-size:clamp(24px,3.2vw,36px);line-height:1.15}
+.lead{font-size:clamp(17px,2vw,22px);font-weight:600;margin:14px 0 12px;line-height:1.32}
+.fine{font-size:12.5px;color:var(--muted);margin-top:14px;line-height:1.5}
+p,li{line-height:1.55;font-size:16px}
 p{margin:0 0 .7em}
 ul,ol{margin:0 0 .7em;padding-left:1.3em}
 li{margin-bottom:.42em}
 li:last-child{margin-bottom:0}
-.lead{font-family:var(--serif);font-size:1.5em;line-height:1.25}
-.fine{font-size:.8em;color:var(--ink-2)}
-.hi{color:var(--accent);font-weight:600}
-.struck li{text-decoration:line-through;color:var(--ink-3)}
-code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:.1em .4em;
-  border-radius:3px}
-.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:.9em 0}
-.panel{display:flex;flex-direction:column;gap:8px;padding:20px 22px;background:var(--surface);
-  border-radius:5px;border-left:3px solid var(--rule-2)}
-.panel.bad{border-left-color:var(--bad)} .panel.bad .plabel{color:var(--bad)}
-.panel.good{border-left-color:var(--good)} .panel.good .plabel{color:var(--good)}
-.plabel{font-family:var(--mono);font-size:.55em;letter-spacing:.11em;text-transform:uppercase;
-  color:var(--ink-3)}
-.pnum{font-family:var(--serif);font-size:1.9em;font-variant-numeric:tabular-nums;line-height:1.05}
-.tw{overflow-x:auto;margin:.9em 0}
-table{border-collapse:collapse;width:100%;font-size:.82em}
-th,td{text-align:left;padding:.6em .8em;border-bottom:1px solid var(--rule);vertical-align:top}
-th{font-family:var(--mono);font-size:.72em;letter-spacing:.09em;text-transform:uppercase;
-  color:var(--ink-3);border-bottom:1px solid var(--rule-2);white-space:nowrap}
-tr.mark td{background:var(--accent-soft)}
-.veil{display:inline-block;font-family:var(--mono);font-size:.62em;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--ink-3);background:repeating-linear-gradient(-45deg,
-  var(--surface-2),var(--surface-2) 5px,var(--rule) 5px,var(--rule) 6px);padding:.25em .7em;
-  border-radius:3px}
-.todo{font-family:var(--mono);font-size:.68em;letter-spacing:.08em;color:var(--flag);
-  background:var(--flag-soft);padding:.15em .6em;border-radius:3px;font-weight:600}
-.hud{position:fixed;left:0;right:0;bottom:0;height:44px;display:flex;align-items:center;
-  gap:14px;padding:0 18px;background:var(--surface);border-top:1px solid var(--rule);
-  font-family:var(--mono);font-size:12px;color:var(--ink-2);z-index:3}
-.hud .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hud .grow{margin-left:auto;display:flex;align-items:center;gap:10px}
-.hud button{font:inherit;color:inherit;background:var(--surface-2);border:1px solid var(--rule);
-  border-radius:3px;padding:3px 10px;cursor:pointer}
-.hud button:hover{border-color:var(--accent);color:var(--accent)}
-.hud button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-#count{font-variant-numeric:tabular-nums}
-.bar{position:fixed;left:0;top:0;height:3px;background:var(--accent);width:0;z-index:4;
-  transition:width .18s ease}
-#pane{position:fixed;left:0;right:0;bottom:44px;max-height:38vh;overflow-y:auto;
-  background:var(--note-soft);border-top:2px solid var(--note);padding:16px 22px;
-  display:none;z-index:2}
-body.pane-on #pane{display:block}
-#pane .plabel{color:var(--note);display:block;margin-bottom:6px}
-#pane .body{font-size:.82em;line-height:1.5}
-#pane .vis{font-size:.75em;color:var(--ink-2);margin-bottom:.7em;padding-bottom:.6em;
-  border-bottom:1px dashed var(--rule-2)}
-.notes,.visual{display:none}
+code{font-family:var(--mono);background:var(--teal-soft);color:var(--navy-2);padding:1.5px 6px;
+  border-radius:6px;font-size:.9em}
+ul.struck{list-style:none;padding:0;margin:0 0 16px}
+ul.struck li{padding:9px 0;font-size:clamp(17px,2vw,22px);font-weight:600;color:var(--muted);
+  text-decoration:line-through;text-decoration-color:var(--red);text-decoration-thickness:3px}
+.tw{overflow-x:auto;margin:14px 0}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:var(--radius);
+  overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.05)}
+th{background:var(--navy);color:#fff;font-size:12.5px;letter-spacing:.04em;padding:10px 14px;
+  text-align:left;font-weight:600}
+td{padding:10px 14px;border-bottom:1px solid var(--border);font-size:14px;vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr.mark td{background:var(--amber-soft);font-weight:600}
+tr.mark td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:16px 0}
+.panel{border-radius:var(--radius);padding:18px 20px;background:var(--card);
+  border:1px solid var(--border)}
+.panel.good{border-color:var(--green);background:var(--green-soft)}
+.panel.bad{border-color:var(--red);background:var(--red-soft)}
+.panel span{display:block;margin-top:6px}
+.plabel{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;font-weight:700;margin-bottom:6px;color:var(--muted)}
+.panel.good .plabel{color:var(--green)}
+.panel.bad .plabel{color:var(--red)}
+.pnum{font-size:clamp(42px,6vw,72px);font-weight:800;color:var(--teal);line-height:1}
+.veil{display:inline-block;font-family:var(--mono);font-size:.85em;color:var(--muted);
+  background:repeating-linear-gradient(-45deg,#eef1f5,#eef1f5 6px,#dde2e8 6px,#dde2e8 8px);
+  padding:.35em .8em;border-radius:8px;border:1.5px dashed #b6c0cc}
+.todo{font-family:var(--mono);font-size:.8em;letter-spacing:.06em;color:var(--amber);
+  background:var(--amber-soft);padding:.15em .6em;border-radius:6px;font-weight:600}
+.hi{color:var(--teal);font-weight:600}
+.diagram{margin:16px 0}
+.diagram svg{display:block;max-width:100%;height:auto}
+.diagram figcaption{font-size:12px;color:var(--muted);margin-top:6px;font-family:var(--mono)}
+.notes{display:none;margin-top:24px;background:#fff8ec;border-left:4px solid var(--amber);
+  border-radius:0 12px 12px 0;padding:14px 18px;font-size:13px;line-height:1.6;color:#4a3b1e}
+.notes .plabel{color:#8a5a00;margin-bottom:8px}
+body.show-notes .notes{display:block}
+.foot{position:fixed;left:0;right:0;bottom:0;background:rgba(246,247,249,.92);
+  backdrop-filter:blur(6px);border-top:1px solid var(--border);padding:7px 18px;
+  display:flex;justify-content:space-between;align-items:center;font-size:11.5px;
+  color:var(--muted);font-family:var(--mono);z-index:40}
+.foot .arrow{color:var(--navy);font-weight:700}
+@page{size:338mm 190mm;margin:10mm}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-@media print{html,body{height:auto;overflow:visible}.deck{position:static}
-  .slide{position:static;display:block;page-break-after:always;
-  min-height:auto;overflow:visible}.hud,#pane,.bar{display:none}}
+@media print{
+  .topbar,.foot,.btn{display:none!important}
+  .slide{display:block!important;min-height:auto;page-break-after:always}
+  body.show-notes .notes{display:block}
+}
+@media(max-width:640px){
+  main{padding:0 10px 70px}.slide{padding:26px 6px 20px}
+}
 `;
 
 const NAV = `
 (function(){
   var slides=[].slice.call(document.querySelectorAll('.slide'));
-  var pane=document.getElementById('pane');
-  var count=document.getElementById('count');
-  var bar=document.getElementById('bar');
+  var pos=document.getElementById('pos');
   var i=0;
   function show(n){
-    i=Math.max(0,Math.min(slides.length-1,n));
-    slides.forEach(function(s,x){s.classList.toggle('live',x===i);});
-    count.textContent=(i+1)+' / '+slides.length;
-    bar.style.width=((i+1)/slides.length*100)+'%';
-    if(pane){
-      var src=slides[i].querySelector('.notes');
-      var vis=slides[i].querySelector('.visual');
-      pane.innerHTML='<span class="plabel">Catatan pengampu — slide '+(i+1)+'</span>'+
-        (vis?'<div class="vis">'+vis.innerHTML+'</div>':'')+
-        '<div class="body">'+(src?src.innerHTML:'<i>tidak ada catatan</i>')+'</div>';
-    }
+    slides[i].classList.remove('on');
+    i=(n+slides.length)%slides.length;
+    slides[i].classList.add('on');
+    if(pos)pos.textContent=(i+1)+' / '+slides.length;
+    window.scrollTo(0,0);
     if(location.hash!=='#s'+(i+1))history.replaceState(null,'','#s'+(i+1));
   }
+  function toggleNotes(){
+    document.body.classList.toggle('show-notes');
+    var b=document.getElementById('btnNotes');
+    if(b)b.classList.toggle('on',document.body.classList.contains('show-notes'));
+  }
+  window.toggleNotes=toggleNotes;
   document.addEventListener('keydown',function(e){
-    if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ')  {show(i+1);e.preventDefault();}
-    else if(e.key==='ArrowLeft'||e.key==='PageUp')             {show(i-1);e.preventDefault();}
-    else if(e.key==='Home')                                    {show(0);e.preventDefault();}
-    else if(e.key==='End')                                     {show(slides.length-1);e.preventDefault();}
-    else if(e.key==='n'||e.key==='N'){document.body.classList.toggle('pane-on');}
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();show(i+1);}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();show(i-1);}
+    else if(e.key==='Home'){show(0);}
+    else if(e.key==='End'){show(slides.length-1);}
+    else if(e.key==='n'||e.key==='N'){toggleNotes();}
+    else if(e.key==='f'||e.key==='F'){document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();}
+    else if(/^[0-9]$/.test(e.key)){var k=parseInt(e.key,10);if(k>=1&&k<=9)show(k-1);}
   });
-  var prev=document.getElementById('prev'),next=document.getElementById('next'),
-      toggle=document.getElementById('notes-toggle');
-  if(prev)prev.addEventListener('click',function(){show(i-1);});
-  if(next)next.addEventListener('click',function(){show(i+1);});
-  if(toggle)toggle.addEventListener('click',function(){document.body.classList.toggle('pane-on');});
+  var touchX=null;
+  document.addEventListener('touchstart',function(e){touchX=e.touches[0].clientX;});
+  document.addEventListener('touchend',function(e){
+    if(touchX===null)return;
+    var d=e.changedTouches[0].clientX-touchX;
+    if(Math.abs(d)>60)show(i+(d<0?1:-1));
+    touchX=null;
+  });
   var start=parseInt((location.hash||'').replace('#s',''),10);
   show(isNaN(start)?0:start-1);
 })();
@@ -555,52 +808,107 @@ const NAV = `
  * VISUAL are never written into the materi, so they are absent from the file rather
  * than hidden by CSS (ADR 0002).
  */
-export function renderHtml(spec, { audience }) {
+export function renderHtml(spec, { audience, baseDir }) {
   const naskah = audience === 'naskah';
   const fm = spec.frontmatter;
   const title = naskah ? fm['title-naskah'] ?? 'Naskah Pengampu' : fm['title-materi'] ?? 'Materi Kuliah';
+  const course = fm.course ?? '';
+  const session = fm.session;
+  const slotStart = fm['slot-start'];
+  const slotMinutes = fm['slot-minutes'];
+  const slotEnd = slotStart && slotMinutes ? clockAt(slotStart, slotMinutes) : '';
+  const metaBits = [
+    slotStart && slotEnd ? `${slotStart}–${slotEnd}` : '',
+    slotMinutes ? `${slotMinutes} menit` : '',
+    `${spec.slides.length} slide`,
+  ].filter(Boolean).join(' · ');
+  const heading = [course, fm.topic].filter(Boolean).join(' · ');
   const out = [];
 
   out.push(`<title>${escapeHtml(title)}</title>`);
   out.push(`<style>${CSS}</style>`);
-  out.push('<div class="bar" id="bar"></div>');
-  out.push('<div class="deck">');
+  out.push('<div class="topbar">');
+  out.push(`<div class="left"><span class="dot"></span><h1>${escapeHtml(heading)}</h1>` +
+    `<span class="meta">${escapeHtml(metaBits)}</span></div>`);
+  out.push('<div class="right">');
+  if (naskah) out.push('<button class="btn" id="btnNotes" onclick="toggleNotes()" title="N">Catatan pengampu</button>');
+  out.push('<button class="btn" id="btnFull" onclick="document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()" title="F">⛶ Layar penuh</button>');
+  out.push('</div></div>');
+  out.push('<main>');
 
   spec.slides.forEach((slide, index) => {
-    const unit = slide.unit ? `<p class="eyebrow">${escapeHtml(slide.unit)}</p>` : '';
-    let tags = '';
-    if (naskah && slide.clock) {
-      tags += `<span class="tag time">min ${String(slide.min).padStart(3, '0')} · ${slide.clock}` +
-        `${slide.dur === null ? '' : ` · ${slide.dur}m`}</span>`;
-    }
-    if (slide.hold) tags += '<span class="tag hold">Tahan di layar</span>';
-    if (naskah && slide.flag) tags += `<span class="tag flag">${escapeHtml(slide.flag)}</span>`;
-    const konten = renderKonten(!naskah && slide.kontenMahasiswa ? slide.kontenMahasiswa : slide.konten);
-    const hidden = naskah
-      ? `<div class="notes">${inline(slide.notes)}</div>` +
-        `<div class="visual">${inline(slide.visual)}</div>`
+    let kicker = '';
+    if (slide.unit) kicker += `<span>${escapeHtml(slide.unit)}</span>`;
+    if (naskah && slide.clock) kicker += `<span class="min">menit ${slide.min} · ${slide.clock}</span>`;
+    if (slide.hold) kicker += '<span class="hold">TAHAN DI LAYAR</span>';
+    if (naskah && slide.flag) kicker += `<span class="flagtag">${escapeHtml(slide.flag)}</span>`;
+    const konten = renderKonten(!naskah && slide.kontenMahasiswa ? slide.kontenMahasiswa : slide.konten, { baseDir });
+    // VISUAL is instructor-only context (what to project/draw), surfaced beside NOTES —
+    // never written into the materi, same guarantee as NOTES itself (ADR 0002).
+    const notes = naskah
+      ? `<div class="notes"><span class="plabel">Catatan pengampu</span>` +
+        (slide.visual ? `<p style="margin:0 0 8px;font-style:italic">Visual: ${inline(slide.visual)}</p>` : '') +
+        `${inline(slide.notes)}</div>`
       : '';
     out.push(
-      `<section class="slide${index === 0 ? ' live' : ''}" id="s${slide.n}">` +
-      `<div class="inner">${unit}` +
-      `<${index === 0 ? 'h1' : 'h2'}>${inline(slide.title)}</${index === 0 ? 'h1' : 'h2'}>` +
-      `${tags ? `<div class="tags">${tags}</div>` : ''}${konten}${hidden}</div></section>`,
+      `<section class="slide${index === 0 ? ' on' : ''}" id="s${slide.n}">` +
+      (kicker ? `<p class="kicker">${kicker}</p>` : '') +
+      `<h2>${inline(slide.title)}</h2>` +
+      `${konten}${notes}</section>`,
     );
   });
 
-  out.push('</div>');
-  if (naskah) out.push('<div id="pane"></div>');
+  out.push('</main>');
   out.push(
-    '<div class="hud">' +
-    `<span class="name">${escapeHtml(fm.topic ?? fm.course ?? '')}</span>` +
-    '<span class="grow">' +
-    (naskah ? '<button id="notes-toggle" type="button">Catatan (N)</button>' : '') +
-    '<button id="prev" type="button">←</button>' +
-    '<button id="next" type="button">→</button>' +
-    '<span id="count">1 / 1</span></span></div>',
+    `<div class="foot"><span id="pos">1 / ${spec.slides.length}</span>` +
+    '<span>← → navigasi · N catatan pengampu · F layar penuh</span>' +
+    `<span class="arrow">${escapeHtml([course, session ? `Sesi ${session}` : ''].filter(Boolean).join(' · '))}</span></div>`,
   );
   out.push(`<script>${NAV}</script>`);
   return out.join('\n');
+}
+
+// ── pdf export ────────────────────────────────────────────────────────────────
+//
+// No npm dependency added (house style: zero-dep single-file tools) — this shells out
+// to a Chromium-family browser already installed on the machine, the same way `build`
+// already shells out to nothing but now needs one external binary for `--print-to-pdf`.
+
+const BROWSER_CANDIDATES = [
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+];
+
+function findBrowser() {
+  return BROWSER_CANDIDATES.find((path) => existsSync(path)) ?? null;
+}
+
+/** Prints an already-written HTML deck to PDF via headless Chromium's own print pipeline. */
+export function renderPdf(htmlPath, pdfPath) {
+  const browser = findBrowser();
+  if (!browser) {
+    return { ok: false, message: 'no Chromium-family browser found for PDF export (checked Chrome, Brave, Chromium, Edge)' };
+  }
+  const result = spawnSync(browser, [
+    '--headless',
+    '--disable-gpu',
+    '--no-sandbox',
+    `--print-to-pdf=${pdfPath}`,
+    '--print-to-pdf-no-header',
+    '--no-pdf-header-footer',
+    `file://${resolve(htmlPath)}`,
+  ], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 30000 });
+  if (result.error) return { ok: false, message: result.error.message };
+  if (!existsSync(pdfPath)) {
+    const stderr = result.stderr ? result.stderr.toString().slice(0, 300) : '';
+    return { ok: false, message: `browser exited ${result.status} — ${stderr || 'no pdf written'}` };
+  }
+  return { ok: true };
 }
 
 // ── residual scan ─────────────────────────────────────────────────────────────
@@ -915,7 +1223,7 @@ const USAGE = `rps-deck — build session decks from a naskah you author and rev
   check    <naskah.md>               validate the naskah
   render   <naskah.md>               emit the student-facing Materi.md
   approve  <naskah.md>               stamp approval, bound to the content hash
-  build    [--final] <naskah.md>     emit both projectable decks
+  build    <naskah.md>               requires approval; emits "<course> - Sesi NN - Slides.html/.pdf"
   scan     <file> <map.json>         residual identifier scan
   sanitise <src> <map.json> <dst>    apply the map, then scan the result
              [--section "A|B"]       keep only these sections (with subsections)
@@ -1043,7 +1351,13 @@ const cmdApprove = ({ args }) => {
   return 0;
 };
 
-const cmdBuild = ({ args, flags }) => {
+/**
+ * `build` is the single, unconditional gate: nothing unresolved, then reviewed and
+ * approved, only then does a projectable file exist at all. There is no lesser "preview"
+ * mode — a tool that can be asked to emit an unapproved deck eventually will be. A stray
+ * `--final` is accepted as a no-op so old habit still works.
+ */
+const cmdBuild = ({ args }) => {
   const path = args[0];
   if (!path) {
     console.error('  ✗ no naskah given');
@@ -1056,44 +1370,36 @@ const cmdBuild = ({ args, flags }) => {
     return 1;
   }
   const open = spec.slides.filter((s) => s.flag);
-
-  // --final is the day-you-teach gate: nothing unresolved, then reviewed and approved.
-  // Content first, because approving a deck that still has an open FLAG just costs a
-  // second round trip.
-  if (flags.has('final')) {
-    if (open.length) {
-      console.error(`✗ ${open.length} open FLAG blocks release:`);
-      reportErrors(open.map((s) => ({ line: s.line, message: `slide ${s.n} — ${s.flag}` })));
-      return 1;
-    }
-    const approval = approvalState(text);
-    if (approval.state !== 'approved') {
-      console.error(`✗ ${basename(path)} — ${approval.message}`);
-      return 1;
-    }
-    console.log(`  ✓ ${approval.message}`);
-  } else if (open.length) {
-    // Previewing with a placeholder is legitimate; teaching from one is not.
-    console.log(`⚠ ${open.length} open FLAG:`);
-    for (const slide of open) console.log(`    slide ${slide.n} — ${slide.flag}`);
+  if (open.length) {
+    console.error(`✗ ${open.length} open FLAG blocks release:`);
+    reportErrors(open.map((s) => ({ line: s.line, message: `slide ${s.n} — ${s.flag}` })));
+    return 1;
   }
-
-  const stem = spec.frontmatter['out-stem'] ?? basename(path).replace(/\.md$/, '');
-  const dir = spec.frontmatter.out ? join(dirname(path), spec.frontmatter.out) : dirname(path);
-  for (const [audience, suffix] of [['naskah', 'pengampu'], ['materi', 'mahasiswa']]) {
-    const html = renderHtml(spec, { audience });
-    if (audience === 'materi') {
-      // Structural, not cosmetic: assert the promise the two code paths exist to keep.
-      const leaks = [/class="notes"/, /class="visual"/, /id="pane"/].filter((re) => re.test(html));
-      if (leaks.length) {
-        console.error(`  ✗ materi leaked instructor content: ${leaks.join(', ')}`);
-        return 1;
-      }
-    }
-    const target = join(dir, `${stem}-${suffix}.html`);
-    writeFileSync(target, html);
-    console.log(`  ✓ ${basename(target)}`);
+  const approval = approvalState(text);
+  if (approval.state !== 'approved') {
+    console.error(`✗ ${basename(path)} — ${approval.message}`);
+    return 1;
   }
+  console.log(`  ✓ ${approval.message}`);
+
+  const fm = spec.frontmatter;
+  const course = fm.course ?? basename(dirname(path));
+  const label = fm.session !== undefined
+    ? `${course} - Sesi ${String(fm.session).padStart(2, '0')}`
+    : course;
+  const dir = fm.out ? join(dirname(path), fm.out) : dirname(path);
+
+  const html = renderHtml(spec, { audience: 'naskah', baseDir: dirname(path) });
+  const htmlPath = join(dir, `${label} - Slides.html`);
+  writeFileSync(htmlPath, html);
+  console.log(`  ✓ ${basename(htmlPath)}`);
+
+  // PDF is a bonus format on top of the html contract: a machine with no Chromium-family
+  // browser (CI, a headless box) still gets a working build, just without this extra.
+  const pdfPath = join(dir, `${label} - Slides.pdf`);
+  const pdf = renderPdf(htmlPath, pdfPath);
+  if (pdf.ok) console.log(`  ✓ ${basename(pdfPath)}`);
+  else console.log(`  ⚠ ${basename(pdfPath)} skipped — ${pdf.message}`);
   return 0;
 };
 
