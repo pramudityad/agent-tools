@@ -70,3 +70,53 @@ RISE-native task score, not nilai akhir — do not conflate the two.
 Do not restate slot numbers here; they drift. The course's real slot lives at
 `~/.agent-tools/rps-deck/CONTEXT.md` — read it, not this file, for BI/WAD/SDLC's actual
 start times and minutes.
+
+## naskah-review (before approve)
+
+A checker prompt, not a formality: **not finding problems is your failure.** If you run
+this section and come back with nothing, you did not look hard enough — hunt actively for
+each of the four things below, do not passively skim the naskah once and call it clean.
+
+This is the judgement pass. It runs *after* `rps-deck check` (slot-truth ticket 09,
+verbatim sub-CPMK ticket 10, DUR-sum-equals-slot) — never instead of it. `check` is
+mechanical and catches what a string comparison can catch; naskah-review exists for
+everything a mechanical check cannot see. Run `check` first; only run this against a
+naskah that already passes it.
+
+For the naskah under review, check:
+
+- **Topic vs sesi-order drift** — does the naskah's `topic` frontmatter match its RPS
+  contract row for that `session` number? For WAD specifically (known drift since Sesi 3),
+  does the pertemuan / session-note title actually agree with what the naskah claims to
+  teach, or has the sesi numbering and the calendar week drifted apart?
+- **Pedagogy for the slot** — does the lesson shape actually fit the real slot from
+  `rps-deck/slots.json`, not just sum to it? A 105-minute slot cannot hold, say, a
+  45-minute uninterrupted lecture block plus a 60-minute lab with no break — DUR summing
+  to the right total does not mean the *shape* is teachable. Read §6/§7 (or their
+  equivalent) and ask: is there a break, is any single block longer than the room can sit
+  through, does the interaction pattern actually change often enough for a Kelas
+  Profesional coming straight from work?
+- **Assessment numbers vs the approved RPS** — do the weights/rubric numbers quoted in the
+  naskah (UAS/UTS/Tugas/Kehadiran split, CPMK weight, rubric scale) match the *approved*
+  RPS contract, not a draft, a proposed revision, or an old revision sitting next to it in
+  the course folder? A course directory often holds more than one RPS-shaped file; confirm
+  which one is actually approved before trusting its numbers.
+- **Sanitisation calls `scan` can't see** — judgement-level renames or references that
+  `rps-deck scan`'s residual scan wouldn't catch mechanically, because they're not a
+  literal string in the rename map: a real client or product named in a way that doesn't
+  match any mapped term (a nickname, a plural, a translated form), a detail specific enough
+  to re-identify the source even with names swapped, or a reference to an internal system
+  by its function rather than its name.
+
+**Output shape** — two lists, nothing softer:
+
+- **RED** — blocks `approve`. Anything in the four checks above that is actually wrong,
+  not just debatable.
+- **AMBER** — advisory. Worth the lecturer's attention, does not block.
+
+**Rework cap** — at most two rework rounds. If a naskah is still RED after two rounds of
+fixes, stop and hand it back to the lecturer rather than iterating a third time.
+
+**Approval stays manual.** `rps-deck approve` is always run by the lecturer, never by the
+agent that ran this review — no agent approves its own naskah, and no agent approves
+another agent's either.
