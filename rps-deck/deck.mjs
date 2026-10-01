@@ -338,6 +338,35 @@ function figure(svg, caption, label) {
     `<figcaption>${escapeHtml(caption)}</figcaption></figure>`;
 }
 
+/** Filled triangle head at (x2,y2) for a segment from (x1,y1); colour defaults to navy. */
+function arrowHead(x1, y1, x2, y2, size = 9, color = 'var(--navy)') {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const ax1 = x2 - size * Math.cos(angle - Math.PI / 6);
+  const ay1 = y2 - size * Math.sin(angle - Math.PI / 6);
+  const ax2 = x2 - size * Math.cos(angle + Math.PI / 6);
+  const ay2 = y2 - size * Math.sin(angle + Math.PI / 6);
+  return `<polygon points="${x2},${y2} ${ax1},${ay1} ${ax2},${ay2}" fill="${color}"/>`;
+}
+
+/** A labelled horizontal message arrow between lifelines: sync (solid, filled head) or return (dashed) or async (open V). */
+function msg(x1, y1, x2, y2, label, kind) {
+  const dashed = kind === 'return';
+  const line = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--navy)" stroke-width="2"${dashed ? ' stroke-dasharray="6,4"' : ''}/>`;
+  let head;
+  if (kind === 'sync') {
+    head = arrowHead(x1, y1, x2, y2, 10);
+  } else if (kind === 'async') {
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const a = 9;
+    head = `<polyline points="${x2 - a * Math.cos(angle - Math.PI / 5)},${y2 - a * Math.sin(angle - Math.PI / 5)} ${x2},${y2} ${x2 - a * Math.cos(angle + Math.PI / 5)},${y2 - a * Math.sin(angle + Math.PI / 5)}" fill="none" stroke="var(--navy)" stroke-width="2"/>`;
+  } else {
+    head = arrowHead(x1, y1, x2, y2, 8);
+  }
+  const midX = (x1 + x2) / 2;
+  return line + head +
+    `<text x="${midX}" y="${y1 - 7}" text-anchor="middle" font-size="11.5" fill="var(--ink)" font-family="var(--mono)">${label}</text>`;
+}
+
 const DIAGRAMS = {
   'class-box': () => figure({
     viewBox: '0 0 320 170',
@@ -562,6 +591,215 @@ const DIAGRAMS = {
       'User mengirim request ke Controller; Controller mengorkestrasi Model dan memilih View; Model memperbarui View; View merespons User',
       'Diagram arsitektur MVC generik: User, Controller, Model, View dengan empat panah alur request/manipulates/selects/updates/response');
   },
+
+  // ── UML behavior diagrams (SDLC Sesi 07) ────────────────────────────────────
+  // Same house rules as the rest of the library: hand-drawn inline SVG, course
+  // colour vocabulary, real example names from the session's own artifacts.
+
+  // Filled triangle for sync messages, open V for async/return — computed from
+  // the segment direction so diagonal arrows keep their head aligned.
+  'activity-notation': () => {
+    const lbl = (x, y, text) => `<text x="${x}" y="${y}" text-anchor="middle" font-size="10.5" font-family="var(--mono)" fill="var(--muted)">${text}</text>`;
+    const hArrow = (x1, y, x2) => `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="var(--navy)" stroke-width="2"/>${arrowHead(x1, y, x2, y)}`;
+    const act = (x, y, w, text) => `<rect x="${x}" y="${y}" width="${w}" height="36" rx="12" fill="var(--card)" stroke="var(--navy)" stroke-width="1.8"/>` +
+      `<text x="${x + w / 2}" y="${y + 23}" text-anchor="middle" font-size="12" fill="var(--ink)">${text}</text>`;
+    const lane = `<rect x="10" y="16" width="740" height="112" rx="14" fill="var(--teal-soft)" opacity=".4"/>` +
+      `<text x="24" y="36" font-size="10.5" font-family="var(--mono)" fill="var(--teal)" font-weight="700">SWIMLANE: STAFF</text>`;
+    const body = lane +
+      `<circle cx="46" cy="78" r="8" fill="var(--navy)"/>` + lbl(46, 108, 'initial') +
+      hArrow(56, 78, 72) +
+      act(74, 60, 118, 'Submit request') + lbl(133, 108, 'activity') +
+      hArrow(194, 78, 218) +
+      `<polygon points="250,48 282,78 250,108 218,78" fill="var(--amber-soft)" stroke="var(--amber)" stroke-width="1.8"/>` + lbl(250, 126, 'decision') +
+      `<line x1="280" y1="72" x2="348" y2="58" stroke="var(--navy)" stroke-width="2"/>${arrowHead(280, 72, 350, 58)}` +
+      `<text x="302" y="56" font-size="11" font-family="var(--mono)" fill="var(--teal)">[&lt; 5 jt]</text>` +
+      `<line x1="280" y1="84" x2="348" y2="98" stroke="var(--navy)" stroke-width="2"/>${arrowHead(280, 84, 350, 98)}` +
+      `<text x="296" y="112" font-size="11" font-family="var(--mono)" fill="var(--teal)">[&gt;= 5 jt]</text>` +
+      `<polygon points="382,54 410,78 382,102 354,78" fill="var(--card)" stroke="var(--border)" stroke-width="1.8"/>` + lbl(382, 126, 'merge') +
+      hArrow(412, 78, 448) +
+      `<rect x="450" y="48" width="6" height="60" fill="var(--navy)"/>` + lbl(453, 126, 'fork') +
+      hArrow(458, 60, 490) + hArrow(458, 96, 490) +
+      act(492, 42, 106, 'Cek budget') + act(492, 78, 106, 'Cek stok') +
+      hArrow(600, 60, 626) + hArrow(600, 96, 626) +
+      `<rect x="628" y="48" width="6" height="60" fill="var(--navy)"/>` + lbl(631, 126, 'join') +
+      hArrow(636, 78, 672) +
+      `<circle cx="686" cy="78" r="9" fill="none" stroke="var(--navy)" stroke-width="2"/><circle cx="686" cy="78" r="4" fill="var(--navy)"/>` + lbl(686, 108, 'final');
+    return figure({ viewBox: '0 0 760 134', body },
+      'initial → activity → decision (guard) → merge → fork/join (paralel) → final, dalam satu swimlane',
+      'Activity diagram notation strip: initial node, activity, decision with guards, merge, fork and join bars, final node, inside one swimlane band');
+  },
+
+  'guards-bad-good': () => {
+    const head = (x, text, color) => `<text x="${x}" y="24" text-anchor="middle" font-size="12" font-family="var(--mono)" font-weight="700" fill="${color}">${text}</text>`;
+    const dia = (cx, cy) => `<polygon points="${cx},${cy - 30} ${cx + 32},${cy} ${cx},${cy + 30} ${cx - 32},${cy}" fill="var(--amber-soft)" stroke="var(--amber)" stroke-width="1.8"/>`;
+    const box = (x, y, w, text, bad) => `<rect x="${x}" y="${y}" width="${w}" height="34" rx="10" fill="${bad ? 'var(--red-soft)' : 'var(--green-soft)'}" stroke="${bad ? 'var(--red)' : 'var(--green)'}" stroke-width="1.6"${bad ? ' stroke-dasharray="5,4"' : ''}/>` +
+      `<text x="${x + w / 2}" y="${y + 21}" text-anchor="middle" font-size="11.5" fill="${bad ? 'var(--red)' : 'var(--ink)'}">${text}</text>`;
+    const bad = `<line x1="178" y1="96" x2="292" y2="70" stroke="var(--red)" stroke-width="2"/>${arrowHead(178, 96, 296, 69, 9, 'var(--red)')}` +
+      `<text x="228" y="72" font-size="11" font-family="var(--mono)" fill="var(--red)">[kecil]</text>` +
+      `<line x1="182" y1="112" x2="292" y2="126" stroke="var(--red)" stroke-width="2"/>${arrowHead(182, 112, 296, 127, 9, 'var(--red)')}` +
+      `<text x="226" y="136" font-size="11" font-family="var(--mono)" fill="var(--red)">[besar]</text>` +
+      `<line x1="150" y1="140" x2="150" y2="178" stroke="var(--red)" stroke-width="2" stroke-dasharray="5,4"/>` +
+      `<line x1="150" y1="178" x2="292" y2="178" stroke="var(--red)" stroke-width="2" stroke-dasharray="5,4"/>${arrowHead(292, 178, 296, 178, 9, 'var(--red)')}` +
+      `<text x="196" y="170" font-size="10.5" font-family="var(--mono)" fill="var(--red)">tanpa guard</text>` +
+      box(298, 52, 168, 'nilai 1–4 jt?', true) + box(298, 108, 168, 'nilai 8 jt?', true) +
+      box(298, 161, 168, 'request menggantung', true);
+    const good = dia(660, 110) +
+      `<line x1="690" y1="96" x2="794" y2="84" stroke="var(--green)" stroke-width="2"/>${arrowHead(690, 96, 798, 83, 9, 'var(--green)')}` +
+      `<text x="712" y="80" font-size="11" font-family="var(--mono)" fill="var(--green)">[&lt; 5 jt]</text>` +
+      `<line x1="690" y1="124" x2="794" y2="150" stroke="var(--green)" stroke-width="2"/>${arrowHead(690, 124, 798, 151, 9, 'var(--green)')}` +
+      `<text x="716" y="152" font-size="11" font-family="var(--mono)" fill="var(--green)">[&gt;= 5 jt]</text>` +
+      box(800, 66, 156, 'Proses A', false) + box(800, 134, 156, 'Proses B', false) +
+      `<text x="760" y="192" text-anchor="middle" font-size="10.5" font-family="var(--mono)" fill="var(--muted)">jumlah guard = 100% kasus, tidak ada irisan</text>`;
+    const body = head(240, '✗ TIDAK LENGKAP — BISA MACET', 'var(--red)') + bad +
+      head(700, '✓ LENGKAP &amp; EKSKLUSIF', 'var(--green)') + good +
+      `<line x1="524" y1="34" x2="524" y2="196" stroke="var(--border)" stroke-width="1.5" stroke-dasharray="6,5"/>`;
+    return figure({ viewBox: '0 0 980 210', body },
+      'kiri: guard tidak terukur — ada nilai yang tidak cocok cabang mana pun; kanan: [< 5 jt] / [>= 5 jt] mencakup semua kasus',
+      'Comparison of bad guards (kecil/besar plus a dangling unguarded branch) versus good measurable guards');
+  },
+
+  'fork-vs-decision': () => {
+    const box = (x, y, w, text, fill, stroke) => `<rect x="${x}" y="${y}" width="${w}" height="36" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="1.8"/>` +
+      `<text x="${x + w / 2}" y="${y + 23}" text-anchor="middle" font-size="12" fill="var(--ink)">${text}</text>`;
+    const body =
+      `<text x="240" y="26" text-anchor="middle" font-size="12.5" font-family="var(--mono)" font-weight="700" fill="var(--teal)">FORK — keduanya terjadi</text>` +
+      `<line x1="60" y1="96" x2="104" y2="96" stroke="var(--navy)" stroke-width="2"/>${arrowHead(60, 96, 108, 96)}` +
+      `<rect x="110" y="62" width="6" height="70" fill="var(--navy)"/>` +
+      `<line x1="116" y1="76" x2="156" y2="76" stroke="var(--navy)" stroke-width="2"/>${arrowHead(116, 76, 160, 76)}` +
+      `<line x1="116" y1="118" x2="156" y2="118" stroke="var(--navy)" stroke-width="2"/>${arrowHead(116, 118, 160, 118)}` +
+      box(162, 58, 140, 'Aktivitas A', 'var(--teal-soft)', 'var(--teal)') +
+      box(162, 100, 140, 'Aktivitas B', 'var(--teal-soft)', 'var(--teal)') +
+      `<line x1="302" y1="76" x2="340" y2="76" stroke="var(--navy)" stroke-width="2"/>${arrowHead(302, 76, 344, 76)}` +
+      `<line x1="302" y1="118" x2="340" y2="118" stroke="var(--navy)" stroke-width="2"/>${arrowHead(302, 118, 344, 118)}` +
+      `<rect x="346" y="62" width="6" height="70" fill="var(--navy)"/>` +
+      `<line x1="352" y1="96" x2="396" y2="96" stroke="var(--navy)" stroke-width="2"/>${arrowHead(352, 96, 400, 96)}` +
+      `<text x="240" y="170" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--muted)">join menunggu SEMUA cabang</text>` +
+      `<line x1="490" y1="34" x2="490" y2="176" stroke="var(--border)" stroke-width="1.5" stroke-dasharray="6,5"/>` +
+      `<text x="730" y="26" text-anchor="middle" font-size="12.5" font-family="var(--mono)" font-weight="700" fill="#8a5a00">DECISION — salah satu</text>` +
+      `<line x1="550" y1="96" x2="606" y2="96" stroke="var(--navy)" stroke-width="2"/>${arrowHead(550, 96, 610, 96)}` +
+      `<polygon points="650,62 684,96 650,130 616,96" fill="var(--amber-soft)" stroke="var(--amber)" stroke-width="1.8"/>` +
+      `<line x1="682" y1="84" x2="786" y2="62" stroke="var(--navy)" stroke-width="2"/>${arrowHead(682, 84, 790, 61)}` +
+      `<text x="712" y="62" font-size="11" font-family="var(--mono)" fill="#8a5a00">[ya]</text>` +
+      `<line x1="682" y1="108" x2="786" y2="132" stroke="var(--navy)" stroke-width="2"/>${arrowHead(682, 108, 790, 133)}` +
+      `<text x="716" y="134" font-size="11" font-family="var(--mono)" fill="#8a5a00">[tidak]</text>` +
+      box(792, 44, 150, 'Proses A', 'var(--amber-soft)', 'var(--amber)') +
+      box(792, 116, 150, 'Proses B', 'var(--amber-soft)', 'var(--amber)') +
+      `<text x="730" y="170" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--muted)">bergantian — guards wajib</text>`;
+    return figure({ viewBox: '0 0 980 190', body },
+      'fork: dua aktivitas paralel dengan join; decision: satu masuk, dua keluar bergantian dengan guard',
+      'Side-by-side fork (parallel activities with join bar) versus decision diamond with guarded branches');
+  },
+
+  'activity-swimlane-handoff': () => {
+    const lane = (i, name) => `<rect x="${i * 245 + 6}" y="6" width="233" height="28" rx="8" fill="var(--navy)"/>` +
+      `<text x="${i * 245 + 122}" y="25" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">${name}</text>` +
+      (i ? `<line x1="${i * 245}" y1="6" x2="${i * 245}" y2="238" stroke="var(--border)" stroke-width="1.5"/>` : '');
+    const act = (x, y, w, text, fill, stroke) => `<rect x="${x}" y="${y}" width="${w}" height="38" rx="10" fill="${fill || 'var(--card)'}" stroke="${stroke || 'var(--navy)'}" stroke-width="1.8"/>` +
+      `<text x="${x + w / 2}" y="${y + 23}" text-anchor="middle" font-size="11.5" fill="var(--ink)">${text}</text>`;
+    const num = (x, y, n) => `<circle cx="${x}" cy="${y}" r="10" fill="var(--red)"/>` +
+      `<text x="${x}" y="${y + 4}" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">${n}</text>`;
+    const line = (x1, y1, x2, y2, color, dash) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2"${dash ? ' stroke-dasharray="6,4"' : ''}/>`;
+    const body = [0, 1, 2, 3].map((i) => lane(i, ['Staff', 'Supervisor / BM', 'Finance', 'Procurement'][i])).join('') +
+      act(28, 62, 190, 'Submit request') +
+      line(218, 81, 330, 81) + arrowHead(218, 81, 334, 81) + num(276, 81, 1) +
+      `<polygon points="366,56 398,84 366,112 334,84" fill="var(--amber-soft)" stroke="var(--amber)" stroke-width="1.8"/>` +
+      `<text x="366" y="88" text-anchor="middle" font-size="11" fill="var(--ink)">&lt; 5 jt?</text>` +
+      line(366, 112, 366, 210, 'var(--red)', true) + line(366, 210, 222, 210, 'var(--red)', true) + arrowHead(222, 210, 218, 210, 9, 'var(--red)') + num(366, 210, 2) +
+      act(28, 191, 190, 'Revisi &amp; submit ulang', 'var(--red-soft)', 'var(--red)') +
+      line(398, 84, 512, 84) + arrowHead(398, 84, 516, 84) + num(455, 84, 3) +
+      `<text x="455" y="70" text-anchor="middle" font-size="10" font-family="var(--mono)" fill="var(--teal)">paralel (fork)</text>` +
+      act(518, 62, 190, 'Cek budget') +
+      line(708, 81, 748, 81) + arrowHead(708, 81, 752, 81) + num(730, 81, 4) +
+      act(754, 62, 204, 'Order + registrasi vendor') +
+      line(856, 100, 856, 142, 'var(--green)', true) + line(856, 142, 222, 142, 'var(--green)', true) + arrowHead(222, 142, 218, 142, 9, 'var(--green)') + num(560, 142, 5) +
+      act(28, 123, 190, 'Close request', 'var(--green-soft)', 'var(--green)');
+    return figure({ viewBox: '0 0 980 244', body },
+      'empat lane, lima panah lintas batas lane (angka merah) — tiap lintasan adalah handoff',
+      'Swimlane activity diagram with four lanes and five numbered lane-crossing handoff arrows');
+  },
+
+  'sequence-notation': () => {
+    const part = (x, name) => `<rect x="${x - 75}" y="10" width="150" height="36" rx="8" fill="var(--navy)"/>` +
+      `<text x="${x}" y="33" text-anchor="middle" font-size="12.5" font-weight="600" fill="#fff">${name}</text>` +
+      `<line x1="${x}" y1="46" x2="${x}" y2="256" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5,5"/>`;
+    const body = part(125, 'Actor') + part(490, 'Service') + part(865, 'Database') +
+      `<rect x="484" y="94" width="12" height="128" fill="var(--teal-soft)" stroke="var(--teal)" stroke-width="1.5"/>` +
+      `<rect x="859" y="146" width="12" height="40" fill="var(--teal-soft)" stroke="var(--teal)" stroke-width="1.5"/>` +
+      msg(129, 78, 482, 78, 'request — sync (kepala penuh)', 'sync') +
+      `<polyline points="496,102 570,102 570,128 502,128" fill="none" stroke="var(--navy)" stroke-width="2"/>${arrowHead(570, 128, 498, 128)}` +
+      `<text x="582" y="119" font-size="11" font-family="var(--mono)" fill="var(--ink)">self-message</text>` +
+      msg(498, 156, 857, 156, 'query — sync', 'sync') +
+      msg(857, 186, 500, 186, 'return — putus-putus', 'return') +
+      msg(482, 218, 129, 218, 'response (return)', 'return') +
+      msg(129, 250, 482, 250, 'async — kepala terbuka', 'async');
+    return figure({ viewBox: '0 0 980 266', body },
+      'participant di atas, lifeline turun, activation bar, sync / return / async / self-message; waktu mengalir ke bawah',
+      'Sequence diagram notation: three participants, lifelines, activation bars, sync, return and async arrows and a self-message');
+  },
+
+  'sequence-fragments': () => {
+    const part = (x, name) => `<rect x="${x - 65}" y="10" width="130" height="32" rx="8" fill="var(--navy)"/>` +
+      `<text x="${x}" y="31" text-anchor="middle" font-size="12.5" font-weight="600" fill="#fff">${name}</text>` +
+      `<line x1="${x}" y1="42" x2="${x}" y2="278" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5,5"/>`;
+    const tag = (x, y, name, guard) => `<polygon points="${x},${y} ${x + 56},${y} ${x + 46},${y + 14} ${x},${y + 14}" fill="var(--teal)"/>` +
+      `<text x="${x + 6}" y="${y + 11}" font-size="10.5" font-family="var(--mono)" font-weight="700" fill="#fff">${name}</text>` +
+      (guard ? `<text x="${x + 64}" y="${y + 11}" font-size="10.5" font-family="var(--mono)" fill="var(--muted)">${guard}</text>` : '');
+    const body = part(165, 'Client') + part(805, 'Service') +
+      `<rect x="60" y="58" width="600" height="84" fill="var(--card)" stroke="var(--navy)" stroke-width="1.8"/>` +
+      tag(60, 58, 'alt') +
+      msg(200, 86, 656, 86, '[stok ada] proses order', 'sync') +
+      `<line x1="60" y1="100" x2="660" y2="100" stroke="var(--navy)" stroke-width="1.2" stroke-dasharray="5,4"/>` +
+      msg(656, 128, 204, 128, '[stok habis] batalkan', 'return') +
+      `<rect x="60" y="156" width="600" height="48" fill="var(--card)" stroke="var(--navy)" stroke-width="1.8"/>` +
+      tag(60, 156, 'opt') +
+      msg(200, 188, 656, 188, 'kirim notifikasi — boleh tidak terjadi', 'sync') +
+      `<rect x="60" y="218" width="600" height="48" fill="var(--card)" stroke="var(--navy)" stroke-width="1.8"/>` +
+      tag(60, 218, 'loop', '[x &lt; 3]') +
+      msg(200, 250, 656, 250, 'retry', 'sync');
+    return figure({ viewBox: '0 0 980 284', body },
+      'alt = salah satu kompartemen; opt = terjadi atau tidak sama sekali; loop = pengulangan dengan guard',
+      'Combined fragments alt with two compartments, opt, and loop with an iteration guard on one interaction');
+  },
+
+  'state-notation': () => {
+    const st = (x, w, text) => `<rect x="${x}" y="35" width="${w}" height="40" rx="14" fill="var(--card)" stroke="var(--navy)" stroke-width="1.8"/>` +
+      `<text x="${x + w / 2}" y="60" text-anchor="middle" font-size="12.5" fill="var(--ink)">${text}</text>`;
+    const lbl = (x, y, text) => `<text x="${x}" y="${y}" text-anchor="middle" font-size="10.5" font-family="var(--mono)" fill="var(--muted)">${text}</text>`;
+    const body = `<circle cx="40" cy="55" r="8" fill="var(--navy)"/>` + lbl(40, 95, 'initial') +
+      `<line x1="48" y1="55" x2="64" y2="55" stroke="var(--navy)" stroke-width="2"/>${arrowHead(48, 55, 66, 55)}` +
+      st(68, 150, 'Menunggu') + lbl(143, 95, 'state (rounded box)') +
+      `<line x1="218" y1="55" x2="396" y2="55" stroke="var(--navy)" stroke-width="2"/>${arrowHead(218, 55, 400, 55)}` +
+      `<text x="308" y="46" text-anchor="middle" font-size="12" font-family="var(--mono)" fill="var(--teal)" font-weight="600">event [guard] / action</text>` +
+      lbl(308, 95, 'transition') +
+      st(402, 150, 'Diproses') +
+      `<line x1="552" y1="55" x2="620" y2="55" stroke="var(--navy)" stroke-width="2"/>${arrowHead(552, 55, 624, 55)}` +
+      `<circle cx="638" cy="55" r="9" fill="none" stroke="var(--navy)" stroke-width="2"/><circle cx="638" cy="55" r="4" fill="var(--navy)"/>` + lbl(638, 95, 'final');
+    return figure({ viewBox: '0 0 680 104', body },
+      'initial → state → transition berlabel event [guard] / action → final',
+      'State machine notation: initial node, rounded state, labelled transition, second state, final node');
+  },
+
+  'state-purchase-request': () => {
+    const st = (x, y, w, text, fill, stroke) => `<rect x="${x}" y="${y}" width="${w}" height="40" rx="14" fill="${fill || 'var(--card)'}" stroke="${stroke || 'var(--navy)'}" stroke-width="1.8"/>` +
+      `<text x="${x + w / 2}" y="${y + 25}" text-anchor="middle" font-size="12" fill="var(--ink)">${text}</text>`;
+    const step = (x1, y, x2, label, color) => `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${color || 'var(--navy)'}" stroke-width="2"/>${arrowHead(x1, y, x2, y, 9, color || 'var(--navy)')}` +
+      `<text x="${(x1 + x2) / 2}" y="${y - 8}" text-anchor="middle" font-size="10.5" font-family="var(--mono)" fill="${color || 'var(--muted)'}">${label}</text>`;
+    const body =
+      st(20, 40, 100, 'Draft') + st(180, 40, 118, 'Submitted') + st(358, 40, 172, 'PendingApproval') +
+      st(600, 40, 112, 'Approved') + st(782, 40, 108, 'Ordered') +
+      step(120, 60, 176, 'submit') + step(300, 60, 354, 'review') + step(532, 60, 596, 'approve') + step(714, 60, 778, 'PO') +
+      `<line x1="444" y1="80" x2="474" y2="134" stroke="var(--red)" stroke-width="2"/>${arrowHead(444, 80, 476, 138, 9, 'var(--red)')}` +
+      `<text x="432" y="115" font-size="10.5" font-family="var(--mono)" fill="var(--red)">reject</text>` +
+      st(424, 140, 112, 'Rejected', 'var(--red-soft)', 'var(--red)') +
+      `<line x1="836" y1="80" x2="680" y2="134" stroke="var(--navy)" stroke-width="2"/>${arrowHead(836, 80, 676, 138)}` +
+      `<text x="788" y="110" font-size="10.5" font-family="var(--mono)" fill="var(--muted)">terima barang</text>` +
+      st(600, 140, 112, 'Received') + st(782, 140, 108, 'Closed', 'var(--green-soft)', 'var(--green)') +
+      step(714, 160, 778, 'close') +
+      `<text x="30" y="215" font-size="10.5" font-family="var(--mono)" fill="var(--muted)">dua pemeriksaan: semua state reachable? semua state punya transisi keluar?</text>`;
+    return figure({ viewBox: '0 0 980 226', body },
+      'siklus hidup satu objek: PurchaseRequest — Draft sampai Closed, dengan cabang Rejected',
+      'PurchaseRequest state machine from Draft to Closed with a Rejected branch');
+  },
 };
 
 /** KONTEN → HTML. Markers become structure; everything else is Markdown. */
@@ -740,7 +978,7 @@ tr.mark td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
   background:var(--amber-soft);padding:.15em .6em;border-radius:6px;font-weight:600}
 .hi{color:var(--teal);font-weight:600}
 .diagram{margin:16px 0}
-.diagram svg{display:block;max-width:100%;height:auto}
+.diagram svg{display:block;max-width:100%;height:auto;max-height:320px;margin:0 auto}
 .diagram figcaption{font-size:12px;color:var(--muted);margin-top:6px;font-family:var(--mono)}
 .notes{display:none;margin-top:24px;background:#fff8ec;border-left:4px solid var(--amber);
   border-radius:0 12px 12px 0;padding:14px 18px;font-size:13px;line-height:1.6;color:#4a3b1e}
