@@ -30,15 +30,19 @@ RISE Tugas text — are a different class of work; see the `course-assessment-de
 
 ## Which artifact "the deck" means
 
-Four different files get called "the deck". Only one is what "slides" or "pdf" means:
+Three different files get called "the deck". Only one is what "slides" or "pdf" means:
 `Sesi NN - Naskah.md` (source, hand-authored), `Sesi NN - Materi.md` (student handout, from
-`render`), the `sesiNN-deck-pengampu/mahasiswa.html` pair from `build` (an intermediate, not
-the deliverable), and **`Sesi NN - Slides.html` + `.pdf`** (the projectable deck — the
-actual answer to "give me the slides"). `build` passing proves the naskah was released; it
-does not mean the slide deliverable exists yet. Full table, build/probe/print recipe, and
-what stales the visual deck after a naskah edit: `references/visual-deck.md`. Distinguishing
+`render`), and **`<course> - Sesi NN - Slides.html` + `.pdf`** (the projectable deck, the only
+file `build` emits, ADR 0007). `build` refuses unless the naskah is approved with no open
+FLAG, so a Slides file existing means the naskah was released. Build/probe/print recipe and
+what stales the deck after a naskah edit: `references/visual-deck.md`. Distinguishing
 what belongs in a student zip vs. an internal instructor file:
 `references/artifact-classification.md`.
+
+A fifth variant exists: a deck exported through the **ppt-master** SVG→PPTX pipeline
+(native PPTX with editable charts/tables + PDF preview). Its runner, export gate, native
+chart/table parity rules, and LibreOffice-render pitfalls:
+`references/ppt-master-pptx-deck.md`.
 
 ## The six steps
 
@@ -112,6 +116,11 @@ The mandate applies to a teaching deck; a note whose slide outline says *logisti
 locks to its declared count via `deck-type: logistics`. Include a `DO NOT INVENT` section
 listing every hard number that appears on a slide.
 
+When the draft is done, load the `humanizer` skill and run its pass on the naskah prose
+(KONTEN, NOTES, delivery script) before `restamp`/`check`; what it may and may not touch:
+`references/humanize-naskah.md`.
+Teaching-craft rules to author against (retrieval opener, I do / We do before a lab, hinge
+question + decision rule, exit ticket, one idea per slide): `references/pedagogy-checklist.md`.
 Field-tested authoring aids: the delayed-example pattern for any lab that ends in a `HOLD`
 (`references/lab-example-pattern.md`), a one-line first-use gloss for dense English terms
 (`references/student-friendly-glossa-2026-09-17.md`), and a pengampu-only delivery section

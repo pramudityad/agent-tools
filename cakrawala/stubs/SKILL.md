@@ -57,6 +57,11 @@ A situation that starts outside the sesi flow and merges onto it.
   (`~/.agent-tools/course-assessment-design/stubs/SKILL.md` — its own linked context, see
   `CONTEXT-MAP.md`) for how the graded artifact is shaped. If it is not installed yet, say so
   rather than improvising the assessment design here.
+- **Nilai / grading** — "grade tugas", "rekap nilai", "nilai UTS/UAS", drafting the ledger or
+  running the final recap: read the **Grading flow** section of
+  `~/.agent-tools/rise-ops/stubs/SKILL.md` (fetch → draft ledger → lecturer approves → post
+  → `rise-ops recap`, ADR 0007). RISE is the score of record; the SEVIMA entry is typed by
+  hand; nilai akhir itself stays out of scope (see Out of scope below).
 
 ## Out of scope
 
@@ -107,10 +112,18 @@ For the naskah under review, check:
   match any mapped term (a nickname, a plural, a translated form), a detail specific enough
   to re-identify the source even with names swapped, or a reference to an internal system
   by its function rather than its name.
+- **Teaching craft** — does the lesson *teach*, not just fit the slot? Run the RED/AMBER
+  list in `~/.claude/skills/rps-deck/references/pedagogy-checklist.md`: retrieval opener,
+  I do / We do before each lab, a hinge question with a decision rule, CFU cadence and an
+  exit ticket, one idea per slide. Fix by reshaping existing DUR minutes, never by adding
+  slides past the mandate.
+- **AI-prose tells** — the naskah should have had the `humanizer` pass
+  (`~/.claude/skills/rps-deck/references/humanize-naskah.md`). Skim NOTES/LEAD for not-X-but-Y, one-line
+  closers, forced triads and dash-everywhere; report as AMBER, never RED.
 
 **Output shape** — two lists, nothing softer:
 
-- **RED** — blocks `approve`. Anything in the four checks above that is actually wrong,
+- **RED** — blocks `approve`. Anything in the checks above that is actually wrong,
   not just debatable.
 - **AMBER** — advisory. Worth the lecturer's attention, does not block.
 

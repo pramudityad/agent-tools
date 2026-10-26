@@ -1,6 +1,6 @@
 # rps-deck
 
-Builds instructor and student session decks from a spec the lecturer has reviewed. This
+Builds the instructor deck and the student Materi from a naskah the lecturer has approved. This
 glossary pins terms that collide with vocabulary already used in course notes and RPS
 documents.
 
@@ -49,9 +49,16 @@ _Avoid_: duration (ambiguous with the session's), timing, length.
 because the failure worth stopping is approve → tweak → ship.
 _Avoid_: sign-off, review status (review is the act; approval is the record).
 
-**Marker**:
+**Deck**:
+`<course> - Sesi NN - Slides.md` — the Slidev source `build` derives from an approved naskah —
+plus its exports `Slides.pdf` (what goes to RISE) and `Slides.pptx`. Never hand-edited;
+regenerate from the naskah instead (ADR 0009).
+_Avoid_: visual deck, ppt-master deck, Deck Pengampu, slides (alone, ambiguous with the
+naskah's `### SLIDE` blocks).
+
+**Marker** (retired for new naskah, ADR 0009):
 A word plus a space applied to the segment it starts — `LEAD:`, `PANEL`, `NUM`, `VEIL`,
-`TODO`. Carries the structure Markdown has no syntax for. Grammar in `FORMAT.md`.
+`TODO`. Only Sesi 01–14 naskah carry them; new `KONTEN` is Slidev markdown.
 _Avoid_: tag (reserved for the on-slide `HOLD`/`FLAG` chips), directive, shortcode.
 
 **FLAG**:

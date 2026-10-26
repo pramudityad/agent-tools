@@ -17,6 +17,12 @@ A situation that starts outside the sesi flow and merges onto it — a susulan T
 publish, UTS/UAS work.
 _Avoid_: exception, special case.
 
+**Soul**:
+`SOUL.md` — the teaching character every agent-written naskah, deck, Materi and Tugas text
+speaks in: who is in the room, the values, the voice (Anda), the lines not crossed. The *who
+and why*; `rps-deck`'s pedagogy checklist owns the *what a lesson must do*.
+_Avoid_: persona, prompt, style guide.
+
 ## Cross-reference
 
 The UTS/UAS on-ramp merges onto `course-assessment-design`, a sibling skill for the same

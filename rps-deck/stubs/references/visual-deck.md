@@ -1,6 +1,6 @@
 # The visual deck — the actual projectable artifact
 
-Four different files get called "the deck". Only one is what "slides" or "pdf" means
+Three different files get called "the deck". Only one is what "slides" or "pdf" means
 (user correction 2026-09-18, BI Sesi 04: *"It not same with existing. Check Sesi 03 -
 Slides.html"*):
 
@@ -8,16 +8,13 @@ Slides.html"*):
 | :---- | :---- | :---- |
 | `Sesi NN - Naskah.md` | you, by hand | source of truth; reviewed then `approve`d |
 | `Sesi NN - Materi.md` | `deck.mjs render` | student handout; gitignored |
-| `sesiNN-deck-pengampu.html` / `-mahasiswa.html` | `deck.mjs build` | plain render — **an intermediate, not the deliverable** |
-| **`Sesi NN - Slides.html` + `Sesi NN - Slides.pdf`** | hand-built visual deck (course CSS/JS, one `<section class="slide">` per slide) | **the projectable deck; this is what "slides"/"pdf" means** |
+| **`<course> - Sesi NN - Slides.html` + `.pdf`** | `deck.mjs build` (ADR 0007), approved naskah only | **the projectable deck; this is what "slides"/"pdf" means** |
 
-`build` passing proves the naskah was released — it does **not** mean the slide
-deliverable exists. When asked for "final slide html and pdf": (1) check for
+`build` is the only producer of the Slides file and refuses an unapproved naskah (ADR 0007). Older Sesi files were hand-built; the steps below describe that. When asked for "final slide html and pdf": (1) check for
 `Sesi NN - Slides.html`; (2) if absent, build it from the naskah's `§8` using the course's
 previous visual deck as the CSS/JS template (see `sdlc-sesi03-04-parallel-visual-build.md`
 for a fan-out recipe when two sessions need it the same night); (3) probe with
-`scripts/probe-visual-deck.py`; (4) print per `print-sesi-slides-batch.md`. Printing
-`sesiNN-deck-*.html` to PDF substitutes for none of those steps.
+`scripts/probe-visual-deck.py`; (4) print per `print-sesi-slides-batch.md`. 
 
 ## Build order, once the naskah is approved
 
@@ -40,6 +37,48 @@ for a fan-out recipe when two sessions need it the same night); (3) probe with
    `print-sesi-slides-batch.md`. Verify `pdfinfo` pages = slides + 1 and file size is in the
    1–2 MB range a real deck lands in.
 4. After any CSS or content patch, re-print — the PDF never updates itself.
+
+## Text-only deck → add diagrams via the DIAGRAMS library (2026-10-01)
+
+A `build`-generated deck is text-only unless its naskah carries `DIAGRAM <name>` lines:
+`deck.mjs` renders those from the fixed hand-drawn SVG library in `DIAGRAMS` (deck.mjs).
+A session whose VISUAL directives say "diagram" but whose deck greps 0 `<svg` means the
+library lacked entries — extend it (helpers `arrowHead` + `msg` sit next to `figure()`),
+insert `DIAGRAM <name>` lines into the naskah KONTEN, then `check → approve → build`.
+Done for SDLC Sesi 07: 8 new UML behavior diagrams (activity/sequence/state notation,
+guards bad-good, fork-vs-decision, swimlane-handoff, fragments, PurchaseRequest
+machine), committed in rps-deck `24bb9fb`. Rules learned:
+
+- **Visual-verify before handoff**: render each new diagram to PNG (playwright
+  `figure.screenshot()` from a preview HTML built via `renderKonten`), then eyeball each
+  with the vision tool. Structural tests pass diagrams with real collisions; layout
+  errors the validator cannot see are the norm, not the exception.
+- **`.diagram svg` carries `max-height:320px`** (deck.mjs CSS) — tall diagrams scale
+  down instead of spilling slides onto a second PDF page. If a new diagram still pushes
+  slide content past one page, shrink the SVG's viewBox aspect or shorten the slide's
+  prose; do not raise the cap above ~320px.
+- Pages = slides + 2 on Sesi 07 (s2 and the s21 lab slide legitimately overflow) —
+  compare page-first-lines against slide order rather than trusting a page count.
+- `msg()` labels sit above the arrow line — keep ≥24px vertical gap between successive
+  messages, and put self-message loops to the right of the activation bar.
+- Playwright for probes/prints resolves from `~/Code/Project/career-ops/node_modules` —
+  import it by absolute path (`.../node_modules/playwright/index.mjs`); ESM does not
+  resolve `playwright` from scripts living outside that project.
+
+## `deck.mjs build` can emit the Slides pair itself — still probe (2026-09-30)
+
+Observed on SDLC Sesi 07: `approve` + `build` wrote `Software Development Life Cycle -
+Sesi 07 - Slides.html` + `.pdf` directly (22 sections / 22 notes, ~640K PDF) — the
+hand-build step is not always needed anymore. What `build` does **not** do is strip
+instructor-only wording from visible text: a lab slide whose `KONTEN` carries
+`Contoh — … (tampilkan setelah 5 menit lab, jangan di awal):` ships that directive
+on-screen, and `probe-visual-deck.py` fails with `instructor wording … visible on [sN]`.
+Fix before handoff: patch the visible `<p>Contoh — …:</p>` down to `Contoh — …:` (the
+delay rule already lives in that slide's `NOTES`), then re-print. The probe path from
+SKILL.md (`scripts/probe-visual-deck.py`) resolves under the *skill* dir
+(`~/.hermes/skills/teaching/rps-deck/scripts/`), not `~/.agent-tools/rps-deck/`.
+Probe LEAD warnings that show `**sa…` fragments are marker-stripping artifacts (naskah
+LEAD contains `**bold**`, HTML doesn't) — confirm the plain text is present and ignore.
 
 ## Editing after release stales the visual deck
 
