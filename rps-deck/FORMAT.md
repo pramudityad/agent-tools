@@ -64,43 +64,20 @@ and sat unnoticed in the source note.
 The naskah's cut table stays prose for the reader. `DUR` is the only machine-readable
 budget, so there is no second copy to drift.
 
-## Markers
+## KONTEN is Slidev markdown (ADR 0009)
 
-A marker is **a word plus a space, applied to the segment it starts**. Segments are
-`|`-delimited inside tables and panels; otherwise the segment is the whole line.
+`KONTEN` is written as [Slidev](https://sli.dev) markdown and passed to the Deck unchanged. There
+is no marker vocabulary: `LEAD:`, `SPLIT`/`PANEL`, `NUM`, `VEIL`, `DIAGRAM` and the rest are
+retired for new naskah. (Sesi 01–14 still carry them and still pass `check`, which no longer
+inspects KONTEN.)
 
-| Marker | Placement | Renders |
-| :---- | :---- | :---- |
-| `LEAD:` | line | the large opening line |
-| `FINE:` | line or segment | small footnote text |
-| `SPLIT:` | line, then indented `PANEL` lines | side-by-side comparison panels |
-| `PANEL` | indented under `SPLIT:` | one panel; `\|`-separated segments follow |
-| `NUM` | segment | large figure |
-| `LABEL` | segment | panel eyebrow |
-| `STRUCK:` | line, before a list | crossed-out list |
-| `VEIL` | segment | covered cell — predict-then-reveal |
-| `TODO` | segment | unmeasured placeholder chip; pair with `FLAG` |
-| `HI` | segment | accent span |
-| `MARK` | a table cell of its own | emphasises that row |
-| `DIAGRAM <name>` | line, own KONTEN entry | a hand-built inline SVG from a fixed library |
+- Plain Markdown: tables, bullet and numbered lists, `**bold**`, `*italic*`, `` `code` ``.
+- Diagrams: a fenced ```` ```mermaid ```` block, or an ordinary image `![alt](path)`.
+- Slide titles: `build` adds `## <title>` unless KONTEN opens with its own `#` heading.
+- Do not write a line that is only `---` — Slidev reads it as a slide break.
 
-`DIAGRAM` is not a general diagramming feature — it names one of a small, fixed set of
-inline SVGs defined in `DIAGRAMS` in `deck.mjs` (currently `class-box`, `relationships-5`,
-`deployment-cutover`, `traceability-flow`). An unknown name fails at render time naming the
-bad name, not silently rendering nothing. Add a new diagram by adding a function to that
-object — there is no template language, each one is hand-drawn SVG.
-
-Plain Markdown carries the rest: tables, bullet and numbered lists, `**bold**`, `*italic*`,
-`` `code` ``, `~~strikethrough~~`.
-
-`NUM`, `LABEL`, `FINE`, `VEIL`, `TODO` and `HI` also apply mid-segment, running to the end
-of it — `Jumlah baris: TODO UKUR SEBELUM KELAS` is how that content actually reads. Use the
-braced form to bound a marker to one word when the sentence continues after it:
-`secara HI{reliably} (andal) dan HI{repeatedly} (berulang)`.
-
-The cost of mid-segment markers is a false positive if prose genuinely contains one of those
-six words followed by a space. None occur in Indonesian teaching prose, but if you hit one,
-brace the real marker or rephrase.
+How the other fields map to the Deck: `NOTES` → presenter notes, `HOLD` → `class: hold`, `UNIT`
+→ a section-divider slide, `VISUAL` → not rendered. See `stubs/references/slidev.md`.
 
 ## Lab HOLD — Contoh (delayed example, not a marker)
 
@@ -108,10 +85,9 @@ Every lab that produces an artifact uses `**HOLD**` to keep the task slide on sc
 After ~5 minutes of pair work, overlay a worked example — never at start. This gives a
 scaffold without spoon-feeding the first attempt and rescues latecomers.
 
-In `**KONTEN**`, after `FINE:` add a plain prose line (not a marker — lowercase `Contoh`):
+In `**KONTEN**`, add a plain prose line:
 
 ```md
-FINE:
 - Minimal dua baris: saat ini diputuskan dari intuisi atau spreadsheet
 Contoh NusaPay — tampilkan setelah 5 menit lab, jangan di awal:
 | # | Keputusan | Siapa (peran) | Frekuensi | Data hari ini | Data seharusnya | Tipe | Catatan |
@@ -125,9 +101,6 @@ Shape: 5 rows, 1 circled (`⭕ DILINGKARI — ` → next artifact), ≥2 rows in
 Sesi 03: 1 fact + 2 dims + grain sentence, Sesi 04-05: 6-rule checklist). In `**NOTES**`
 add: `Setelah 5 menit, proyeksikan Contoh di atas sebagai referensi — jangan di awal.`
 Full per-course instantiations: `references/lab-example-pattern.md`.
-
-Do **not** write `CONTOH` in ALL-CAPS at line start — that trips `unknown marker CONTOH`.
-Write `Contoh —` (capital C only).
 
 ## Gotchas that fail `check`
 
@@ -149,7 +122,3 @@ Each of these has cost a real authoring session.
   unrelated.
 - **Use absolute paths.** A shell's working directory persists between calls; relative
   paths in a later write resolve somewhere you did not intend.
-
-A line-leading ALL-CAPS word that is not in the table above fails the parse. That is
-deliberate — the alternative is a typo rendering as literal text on a classroom screen. If
-the prose genuinely starts with an acronym and a colon, lowercase it or rephrase.

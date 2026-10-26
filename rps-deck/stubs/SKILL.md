@@ -203,9 +203,9 @@ Concrete, previously-hit pitfalls worth reading before repeating them, one topic
 
 ## Standing rules
 
-- Generated HTML and `Materi.md` are gitignored; the naskah, sanitised artifacts, maps and
+- Generated `Slides.*` and `Materi.md` are gitignored; the naskah, sanitised artifacts, maps and
   the defect register are committed.
-- Never put a number on a slide that nobody has measured. Use `TODO` plus a slide-level
+- Never put a number on a slide that nobody has measured. Write `TODO UKUR` in its place plus a slide-level
   `FLAG`, and let `build` refuse rather than guessing.
 - A `Sesi NN - Research.md` may exist and is useful when a session has no week note. Nothing
   generates or validates it — see ADR 0005 for why.

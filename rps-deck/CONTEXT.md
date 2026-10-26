@@ -56,7 +56,7 @@ regenerate from the naskah instead (ADR 0009).
 _Avoid_: visual deck, ppt-master deck, Deck Pengampu, slides (alone, ambiguous with the
 naskah's `### SLIDE` blocks).
 
-**Marker** (retired for new naskah, ADR 0009):
+**Marker** (retired, ADR 0009; no code reads them any more):
 A word plus a space applied to the segment it starts — `LEAD:`, `PANEL`, `NUM`, `VEIL`,
 `TODO`. Only Sesi 01–14 naskah carry them; new `KONTEN` is Slidev markdown.
 _Avoid_: tag (reserved for the on-slide `HOLD`/`FLAG` chips), directive, shortcode.

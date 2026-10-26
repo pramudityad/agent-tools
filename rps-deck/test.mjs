@@ -23,7 +23,7 @@ function run(args, cwd, extraEnv = {}) {
   }
 }
 
-import { parseSpec, validate, renderSlidev, renderHtml, renderKonten, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap, checkSlotTruth, checkVerbatimSubCpmk } from './deck.mjs';
+import { parseSpec, validate, renderSlidev, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap, checkSlotTruth, checkVerbatimSubCpmk } from './deck.mjs';
 
 let passed = 0;
 const failed = [];
@@ -94,29 +94,6 @@ test('a slide missing NOTES errors with its slide number and line', () => {
   assert.equal(err.slide, 2);
   assert.match(err.message, /NOTES/);
   assert.ok(err.line > 0, 'error carries a line number');
-});
-
-test('an unknown KONTEN marker errors instead of rendering as literal text', () => {
-  const spec = parseSpec(MINIMAL.replace('LEAD: Business Intelligence Systems', 'WOBBLE: Business Intelligence Systems'));
-  const err = spec.errors.find((e) => /WOBBLE/.test(e.message));
-  assert.ok(err, 'expected an error naming the unknown marker');
-  assert.equal(err.slide, 1);
-});
-
-test('every documented marker is accepted', () => {
-  const konten = ['LEAD: judul', 'FINE: catatan kecil', 'STRUCK:', '- salah', 'SPLIT:', '  PANEL Finance | NUM 4,2 miliar', '    LABEL Pendapatan'].join('\n');
-  const spec = parseSpec(MINIMAL.replace('LEAD: Business Intelligence Systems', konten));
-  assert.deepEqual(spec.errors, [], 'no marker should be reported unknown');
-});
-
-test('DIAGRAM renders a named SVG from the fixed library', () => {
-  const html = renderKonten('DIAGRAM class-box');
-  assert.match(html, /<svg/);
-  assert.match(html, /PurchaseRequest/);
-});
-
-test('DIAGRAM with an unknown name fails loudly, naming the name', () => {
-  assert.throws(() => renderKonten('DIAGRAM not-a-real-diagram'), /not-a-real-diagram/);
 });
 
 // ── seam 2: validate ──────────────────────────────────────────────────────────
@@ -198,110 +175,6 @@ test('an unknown course fails, telling the lecturer to supply the real slot', ()
   const errors = checkSlotTruth(fm, SLOT_TABLE);
   assert.equal(errors.length, 1);
   assert.match(errors[0].message, /unknown course "Underwater Basketweaving" — ask the lecturer for the real slot/);
-});
-
-// ── seam 3: renderHtml ────────────────────────────────────────────────────────
-
-const OVERRIDE = MINIMAL.replace(
-  '**NOTES** `[min 008 · 18:23]` Katakan sesi selesai 20:00.',
-  '**KONTEN-MAHASISWA**\nTODO ditampilkan di kelas\n**FLAG** butuh dua angka\n**NOTES** `[min 008 · 18:23]` Katakan sesi selesai 20:00.',
-).replace('- Pembuka', 'TODO UKUR SEBELUM KELAS');
-
-test('materi carries no speaker notes, visual directives or notes pane', () => {
-  const html = renderHtml(parseSpec(MINIMAL), { audience: 'materi' });
-  assert.equal(html.match(/class="notes"/g), null, 'no notes markup');
-  assert.equal(html.match(/class="visual"/g), null, 'no visual directives');
-  assert.equal(html.match(/id="pane"/g), null, 'no notes pane');
-  assert.ok(!html.includes('Katakan sesi selesai'), 'no note text anywhere in source');
-  assert.ok(!html.includes('tabel 3 kolom'), 'no visual text anywhere in source');
-});
-
-test('naskah carries notes and visual directives inline, per slide', () => {
-  const html = renderHtml(parseSpec(MINIMAL), { audience: 'naskah' });
-  assert.equal(html.match(/class="notes"/g).length, 2);
-  assert.ok(html.includes('tabel 3 kolom'), 'VISUAL text surfaces for the instructor');
-  assert.ok(html.includes('Katakan sesi selesai'));
-  assert.ok(html.includes('18:23'), 'clock stamp present');
-});
-
-// \u2500\u2500 projectable deck \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-
-test('every slide becomes one section, and only the first is shown', () => {
-  const html = renderHtml(parseSpec(MINIMAL), { audience: 'materi' });
-  assert.equal((html.match(/<section class="slide/g) ?? []).length, 2);
-  assert.equal((html.match(/class="slide on"/g) ?? []).length, 1, 'exactly one starts shown');
-  assert.match(html, /id="s1"/);
-  assert.match(html, /id="s2"/);
-});
-
-test('the deck is navigable and self-contained', () => {
-  const html = renderHtml(parseSpec(MINIMAL), { audience: 'materi' });
-  assert.match(html, /ArrowRight/, 'keyboard nav');
-  assert.match(html, /ArrowLeft/);
-  assert.match(html, /id="pos"/, 'slide counter');
-  assert.equal(html.match(/src="https?:/g), null, 'no external scripts');
-  assert.equal(html.match(/href="https?:\/\/[^"]*\.css/g), null, 'no external stylesheets');
-});
-
-test('reduced motion is respected', () => {
-  assert.match(renderHtml(parseSpec(MINIMAL), { audience: 'materi' }), /prefers-reduced-motion/);
-});
-
-test('KONTEN-MAHASISWA replaces the instructor content for students only', () => {
-  const spec = parseSpec(OVERRIDE);
-  const materi = renderHtml(spec, { audience: 'materi' });
-  const naskah = renderHtml(spec, { audience: 'naskah' });
-  assert.ok(!materi.includes('UKUR SEBELUM KELAS'), 'instructor placeholder must not reach students');
-  assert.ok(materi.includes('ditampilkan di kelas'), 'student override is used');
-  assert.ok(naskah.includes('UKUR SEBELUM KELAS'), 'naskah keeps the real TODO');
-});
-
-test('markers render as structure, not literal text', () => {
-  const konten = ['LEAD: judul besar', 'SPLIT:', '  PANEL Finance | NUM 4,2 miliar', '| a | VEIL tertutup |'].join('\n');
-  const html = renderHtml(parseSpec(MINIMAL.replace('LEAD: Business Intelligence Systems', konten)), { audience: 'materi' });
-  assert.match(html, /class="lead"/);
-  assert.match(html, /class="split"/);
-  assert.match(html, /class="panel"/);
-  assert.match(html, /class="pnum"/);
-  assert.match(html, /class="veil"/);
-  assert.ok(!html.includes('LEAD:'), 'the marker word itself never renders');
-  assert.ok(!html.includes('PANEL '), 'the marker word itself never renders');
-});
-
-test('a marker applies from wherever it appears to the end of its segment', () => {
-  // Sesi 1 slide 23 reads "Jumlah baris: TODO UKUR SEBELUM KELAS" — the label comes first.
-  const konten = ['- Jumlah baris: TODO UKUR SEBELUM KELAS', '- row-store: VEIL ditampilkan di kelas'].join('\n');
-  const html = renderHtml(parseSpec(MINIMAL.replace('LEAD: Business Intelligence Systems', konten)), { audience: 'materi' });
-  assert.match(html, /Jumlah baris: <span class="todo">UKUR SEBELUM KELAS<\/span>/);
-  assert.match(html, /row-store: <span class="veil">ditampilkan di kelas<\/span>/);
-  assert.ok(!html.includes('TODO UKUR'), 'the marker word never renders');
-});
-
-test('a braced marker wraps exactly its word, mid-sentence', () => {
-  // Sesi 1 slide 14: "...secara reliably (andal) dan repeatedly (berulang)" — two accents
-  // inside one sentence, so end-of-segment would swallow the rest.
-  const konten = 'LEAD: mendukung keputusan secara HI{reliably} (andal) dan HI{repeatedly} (berulang).';
-  const html = renderHtml(parseSpec(MINIMAL.replace('LEAD: Business Intelligence Systems', konten)), { audience: 'materi' });
-  assert.equal((html.match(/<span class="hi">/g) ?? []).length, 2);
-  assert.match(html, /<span class="hi">reliably<\/span> \(andal\) dan <span class="hi">repeatedly<\/span> \(berulang\)/);
-});
-
-test('a panel can carry a good/bad variant', () => {
-  // Sesi 1 slide 31 contrasts a rejected answer with an accepted one; the colour is the point.
-  const konten = ['SPLIT:', '  PANEL Ditolak | BAD', '    “Marketing yang memutuskan”', '  PANEL Diterima | GOOD'].join('\n');
-  const html = renderHtml(parseSpec(MINIMAL.replace('LEAD: Business Intelligence Systems', konten)), { audience: 'materi' });
-  assert.match(html, /class="panel bad"/);
-  assert.match(html, /class="panel good"/);
-  assert.ok(!html.includes('BAD'), 'the variant word never renders');
-});
-
-test('the projectable deck is a single fixed light palette, matching the classroom template', () => {
-  // Sesi 01-04's own "Slides.html" (the reference this template matches) never carried a
-  // dark variant either — a projector deck is not a themeable app surface.
-  const html = renderHtml(parseSpec(MINIMAL), { audience: 'materi' });
-  assert.match(html, /:root\{/, 'palette tokens on :root');
-  assert.match(html, /html,body\{margin:0;padding:0;background:var\(--bg\)/, 'body paints from a token');
-  assert.ok(!html.includes('prefers-color-scheme'), 'no dark-mode branch to keep in sync');
 });
 
 // ── seam 4: scanResiduals ─────────────────────────────────────────────────────
