@@ -1394,7 +1394,7 @@ export function courseStatus(courseDir) {
     return {
       n,
       naskah,
-      slides: anyEndsWith(files, `Sesi ${n} - Slides.html`) || anyEndsWith(files, `Sesi ${n} - Slides.pdf`),
+      slides: anyEndsWith(files, `Sesi ${n} - Slides.pdf`) || anyEndsWith(files, `Sesi ${n} - Slides.pptx`),
       materi: anyEndsWith(files, `Sesi ${n} - Materi.md`),
     };
   });

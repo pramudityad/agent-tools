@@ -579,7 +579,7 @@ writeFileSync(join(courseDir, 'Sesi 02 - Naskah.md'), MINIMAL);
 // Sesi 03: approved, built — slides and materi both on disk.
 writeFileSync(join(courseDir, 'Sesi 03 - Warehousing.md'), '# Warehousing\n');
 writeFileSync(join(courseDir, 'Sesi 03 - Naskah.md'), approve(MINIMAL, '2026-09-04'));
-writeFileSync(join(courseDir, 'Sesi 03 - Slides.html'), '<html></html>');
+writeFileSync(join(courseDir, 'Sesi 03 - Slides.pdf'), '%PDF');
 writeFileSync(join(courseDir, 'Sesi 03 - Materi.md'), '# Materi\n');
 // Sesi 04: approved, then edited — stale.
 writeFileSync(join(courseDir, 'Sesi 04 - ETL.md'), '# ETL\n');
@@ -607,10 +607,25 @@ test('status reports whether Slides and Materi were built', () => {
 test('status finds Slides built under a course-prefixed filename too', () => {
   writeFileSync(join(courseDir, 'Sesi 05 - OLAP.md'), '# OLAP\n');
   writeFileSync(join(courseDir, 'Sesi 05 - Naskah.md'), approve(MINIMAL, '2026-09-04'));
-  writeFileSync(join(courseDir, 'Business Intelligence Systems - Sesi 05 - Slides.html'), '<html></html>');
+  writeFileSync(join(courseDir, 'Business Intelligence Systems - Sesi 05 - Slides.pdf'), '%PDF');
   const { out } = run(['status', courseDir], dir);
   const sesi05 = out.split('\n').find((line) => line.includes('Sesi 05'));
   assert.match(sesi05, /slides.*yes/i);
+});
+
+test('status counts a pptx-only sesi as having slides', () => {
+  writeFileSync(join(courseDir, 'Sesi 06 - Star.md'), '# Star\n');
+  writeFileSync(join(courseDir, 'Sesi 06 - Naskah.md'), approve(MINIMAL, '2026-09-04'));
+  writeFileSync(join(courseDir, 'Business Intelligence Systems - Sesi 06 - Slides.pptx'), 'PK');
+  const sesi06 = run(['status', courseDir], dir).out.split('\n').find((line) => line.includes('Sesi 06'));
+  assert.match(sesi06, /slides.*yes/i);
+});
+
+test('status does not count the retired Slides.html as the Deck', () => {
+  writeFileSync(join(courseDir, 'Sesi 07 - Snow.md'), '# Snow\n');
+  writeFileSync(join(courseDir, 'Sesi 07 - Slides.html'), '<html></html>');
+  const sesi07 = run(['status', courseDir], dir).out.split('\n').find((line) => line.includes('Sesi 07'));
+  assert.match(sesi07, /slides.*no/i);
 });
 
 test('status names the lowest-numbered sesi with no approved naskah', () => {
