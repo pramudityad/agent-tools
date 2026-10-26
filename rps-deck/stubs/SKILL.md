@@ -32,10 +32,11 @@ RISE Tugas text — are a different class of work; see the `course-assessment-de
 
 Three different files get called "the deck". Only one is what "slides" or "pdf" means:
 `Sesi NN - Naskah.md` (source, hand-authored), `Sesi NN - Materi.md` (student handout, from
-`render`), and **`<course> - Sesi NN - Slides.html` + `.pdf`** (the projectable deck, the only
-file `build` emits, ADR 0007). `build` refuses unless the naskah is approved with no open
+`render`), and **`<course> - Sesi NN - Slides.md` + `.pdf` + `.pptx`** (the Slidev Deck, the only
+files `build` emits, ADR 0009). `build` refuses unless the naskah is approved with no open
 FLAG, so a Slides file existing means the naskah was released. Build/probe/print recipe and
-what stales the deck after a naskah edit: `references/visual-deck.md`. Distinguishing
+what stales the deck after a naskah edit: `references/visual-deck.md` (legacy, pre-ADR 0009).
+How `build` drives Slidev (workspace, install, theme resolution): `references/slidev.md`. Distinguishing
 what belongs in a student zip vs. an internal instructor file:
 `references/artifact-classification.md`.
 
@@ -138,7 +139,7 @@ deck.mjs render "Sesi NN - Naskah.md"
 
 Hand the user **both** files — the naskah they author and the materi students receive. This
 is the review gate; stop here until they respond. Do not call `approve` or `build`, and do
-not hand-build `Sesi NN - Slides.html/.pdf`, until the user explicitly says to proceed for
+not hand-build `Sesi NN - Slides.md/.pdf/.pptx`, until the user explicitly says to proceed for
 that sesi — "prepare" or a draft request alone is not approval.
 
 *Done when:* the user has reviewed both and explicitly said to proceed.
@@ -156,7 +157,7 @@ nothing. Publish the **materi** only; open the naskah as a local file, so no ins
 exists to be mis-pasted.
 
 Approval is also the trigger to produce the actual projectable deck —
-`Sesi NN - Slides.html` + `.pdf` — if it doesn't exist yet or the naskah changed since it was
+`Sesi NN - Slides.md` + `.pdf` — if it doesn't exist yet or the naskah changed since it was
 last built. Build order, the probe step, and the print recipe:
 `references/visual-deck.md`.
 

@@ -1107,45 +1107,87 @@ export function renderHtml(spec, { audience, baseDir }) {
   return out.join('\n');
 }
 
-// ── pdf export ────────────────────────────────────────────────────────────────
+// ── slidev emit ───────────────────────────────────────────────────────────────
 //
-// No npm dependency added (house style: zero-dep single-file tools) — this shells out
-// to a Chromium-family browser already installed on the machine, the same way `build`
-// already shells out to nothing but now needs one external binary for `--print-to-pdf`.
+// ADR 0009: the Deck is a Slidev source derived from the approved naskah, never hand-edited.
+// KONTEN passes through untouched; NOTES become the trailing presenter comment; HOLD maps to
+// `class: hold`; each UNIT start opens with a section-divider slide; VISUAL is not rendered.
 
-const BROWSER_CANDIDATES = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium-browser',
-  '/usr/bin/chromium',
-];
+const HERE = dirname(fileURLToPath(import.meta.url));
+const THEME_DIR = join(HERE, 'slidev', 'theme-cakrawala');
 
-function findBrowser() {
-  return BROWSER_CANDIDATES.find((path) => existsSync(path)) ?? null;
+/** A YAML scalar, quoted only when plain style would misparse. */
+function yamlScalar(value) {
+  const text = String(value);
+  return /^[\s'"#&*!|>%@`\-?[\]{},]|: | #|\s$/.test(text) ? JSON.stringify(text) : text;
 }
 
-/** Prints an already-written HTML deck to PDF via headless Chromium's own print pipeline. */
-export function renderPdf(htmlPath, pdfPath) {
-  const browser = findBrowser();
-  if (!browser) {
-    return { ok: false, message: 'no Chromium-family browser found for PDF export (checked Chrome, Brave, Chromium, Edge)' };
+function yamlBlock(map) {
+  return Object.entries(map).map(([key, value]) => `${key}: ${yamlScalar(value)}`).join('\n');
+}
+
+export function renderSlidev(spec) {
+  if (!spec.slides.length) throw new Error('renderSlidev: naskah has no slides');
+  const fm = spec.frontmatter;
+  const head = {
+    theme: THEME_DIR,
+    title: [fm.course, fm.topic].filter(Boolean).join(' · ') || 'Slides',
+  };
+  const slides = [];
+  let unit = '';
+  for (const slide of spec.slides) {
+    if (slide.unit && slide.unit !== unit) {
+      slides.push({ fm: { layout: 'section' }, body: `# ${slide.unit}` });
+    }
+    if (slide.unit) unit = slide.unit;
+    const heading = /^#/.test(slide.konten) ? '' : `## ${slide.title}\n\n`;
+    const stamp = slide.clock ? `[min ${String(slide.min).padStart(3, '0')} · ${slide.clock}] ` : '';
+    const notes = `${stamp}${slide.notes}`.replaceAll('-->', '--&gt;');
+    slides.push({
+      fm: slide.hold ? { class: 'hold' } : {},
+      body: `${heading}${slide.konten}\n\n<!--\n${notes}\n-->`,
+    });
   }
-  const result = spawnSync(browser, [
-    '--headless',
-    '--disable-gpu',
-    '--no-sandbox',
-    `--print-to-pdf=${pdfPath}`,
-    '--print-to-pdf-no-header',
-    '--no-pdf-header-footer',
-    `file://${resolve(htmlPath)}`,
-  ], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 30000 });
+  // Slidev reads the first frontmatter block as both headmatter and slide 1's own.
+  const [first, ...rest] = slides;
+  const out = [`---\n${yamlBlock({ ...head, ...first.fm })}\n---\n\n${first.body}`];
+  for (const slide of rest) {
+    const frontmatter = Object.keys(slide.fm).length ? `${yamlBlock(slide.fm)}\n---\n` : '';
+    out.push(`---\n${frontmatter}\n${slide.body}`);
+  }
+  return `${out.join('\n\n')}\n`;
+}
+
+// ── slidev export ─────────────────────────────────────────────────────────────
+//
+// deck.mjs stays zero-dependency: it only spawns the Slidev binary of the pinned workspace
+// in `slidev/` (ADR 0009). The workspace is run from its own directory so the entry file
+// can live next to the naskah — Slidev resolves the theme by absolute path (see
+// references/slidev.md).
+
+const SLIDEV_DIR = process.env.RPS_DECK_SLIDEV_DIR ?? join(HERE, 'slidev');
+const EXPORT_TIMEOUT_MS = 180000;
+
+function findSlidev() {
+  const bin = join(SLIDEV_DIR, 'node_modules', '.bin', 'slidev');
+  if (existsSync(bin)) return { ok: true, bin };
+  return {
+    ok: false,
+    message: `Slidev workspace not installed at ${SLIDEV_DIR}. Fix: cd "${SLIDEV_DIR}" && npm install && npx playwright-chromium install chromium`,
+  };
+}
+
+/** Exports a Slidev source to `outPath` in the given format. */
+function exportSlidev(bin, mdPath, outPath, format) {
+  const result = spawnSync(bin, ['export', resolve(mdPath), '--format', format, '--output', resolve(outPath)], {
+    cwd: SLIDEV_DIR,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    timeout: EXPORT_TIMEOUT_MS,
+  });
   if (result.error) return { ok: false, message: result.error.message };
-  if (!existsSync(pdfPath)) {
-    const stderr = result.stderr ? result.stderr.toString().slice(0, 300) : '';
-    return { ok: false, message: `browser exited ${result.status} — ${stderr || 'no pdf written'}` };
+  if (result.status !== 0 || !existsSync(outPath)) {
+    const stderr = result.stderr ? result.stderr.toString().trim().split('\n').slice(-3).join(' | ').slice(0, 300) : '';
+    return { ok: false, message: `slidev exited ${result.status} — ${stderr || 'no file written'}. If Chromium is missing: cd "${SLIDEV_DIR}" && npx playwright-chromium install chromium` };
   }
   return { ok: true };
 }
@@ -1571,7 +1613,7 @@ const USAGE = `rps-deck — build session decks from a naskah you author and rev
   check    <naskah.md>               validate the naskah
   render   <naskah.md>               emit the student-facing Materi.md
   approve  <naskah.md>               stamp approval, bound to the content hash
-  build    <naskah.md>               requires approval; emits "<course> - Sesi NN - Slides.html/.pdf"
+  build    <naskah.md>               requires approval; emits "<course> - Sesi NN - Slides.md/.pdf/.pptx"
   status   <course-dir>              one row per sesi: naskah state, Slides/Materi present
   scan     <file> <map.json>         residual identifier scan
   sanitise <src> <map.json> <dst>    apply the map, then scan the result
@@ -1739,17 +1781,31 @@ const cmdBuild = ({ args }) => {
     : course;
   const dir = fm.out ? join(dirname(path), fm.out) : dirname(path);
 
-  const html = renderHtml(spec, { audience: 'naskah', baseDir: dirname(path) });
-  const htmlPath = join(dir, `${label} - Slides.html`);
-  writeFileSync(htmlPath, html);
-  console.log(`  ✓ ${basename(htmlPath)}`);
+  // Check the tooling before writing anything: a missing workspace must never leave a
+  // Slides.md behind that looks like a finished build.
+  const slidevBin = findSlidev();
+  if (!slidevBin.ok) {
+    console.error(`✗ ${slidevBin.message}`);
+    return 1;
+  }
 
-  // PDF is a bonus format on top of the html contract: a machine with no Chromium-family
-  // browser (CI, a headless box) still gets a working build, just without this extra.
+  const mdPath = join(dir, `${label} - Slides.md`);
+  writeFileSync(mdPath, renderSlidev(spec));
+  console.log(`  ✓ ${basename(mdPath)}`);
+
   const pdfPath = join(dir, `${label} - Slides.pdf`);
-  const pdf = renderPdf(htmlPath, pdfPath);
-  if (pdf.ok) console.log(`  ✓ ${basename(pdfPath)}`);
-  else console.log(`  ⚠ ${basename(pdfPath)} skipped — ${pdf.message}`);
+  const pdf = exportSlidev(slidevBin.bin, mdPath, pdfPath, 'pdf');
+  if (!pdf.ok) {
+    console.error(`✗ ${basename(pdfPath)} — ${pdf.message}`);
+    return 1;
+  }
+  console.log(`  ✓ ${basename(pdfPath)}`);
+
+  // The editable PPTX is a convenience; the PDF is what goes to RISE, so it only warns.
+  const pptxPath = join(dir, `${label} - Slides.pptx`);
+  const pptx = exportSlidev(slidevBin.bin, mdPath, pptxPath, 'pptx-editable');
+  if (pptx.ok) console.log(`  ✓ ${basename(pptxPath)}`);
+  else console.log(`  ⚠ ${basename(pptxPath)} skipped — ${pptx.message}`);
   return 0;
 };
 

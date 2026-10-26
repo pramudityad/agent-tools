@@ -1,0 +1,7 @@
+{
+  "name": "slidev-theme-cakrawala",
+  "version": "1.0.0",
+  "private": true,
+  "engines": { "slidev": ">=53.0.0" },
+  "slidev": { "colorSchema": "light", "defaults": { "aspectRatio": "16/9" } }
+}

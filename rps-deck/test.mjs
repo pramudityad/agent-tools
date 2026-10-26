@@ -4,7 +4,7 @@
 // Run with: node test.mjs
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -14,16 +14,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, 'deck.mjs');
 
 /** Runs the CLI, returning status and combined output instead of throwing. */
-function run(args, cwd) {
+function run(args, cwd, extraEnv = {}) {
   try {
-    const stdout = execFileSync('node', [CLI, ...args], { cwd, encoding: 'utf8', stdio: 'pipe' });
+    const stdout = execFileSync('node', [CLI, ...args], { cwd, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...extraEnv } });
     return { status: 0, out: stdout };
   } catch (err) {
     return { status: err.status ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}` };
   }
 }
 
-import { parseSpec, validate, renderHtml, renderKonten, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap, checkSlotTruth, checkVerbatimSubCpmk } from './deck.mjs';
+import { parseSpec, validate, renderSlidev, renderHtml, renderKonten, scanResiduals, restamp, renderMateri, approve, approvalState, parseRps, extract, applyMap, checkSlotTruth, checkVerbatimSubCpmk } from './deck.mjs';
 
 let passed = 0;
 const failed = [];
@@ -387,37 +387,56 @@ test('check refuses a naskah whose slot-minutes disagrees with the real course s
   assert.match(out, /slot-minutes 150 disagrees with the real Business Intelligence Systems slot \(105 min\)/);
 });
 
-const SLIDES_NAME = 'Business Intelligence Systems - Sesi 01 - Slides.html';
+const SLIDES_NAME = 'Business Intelligence Systems - Sesi 01 - Slides.md';
+const PDF_NAME = 'Business Intelligence Systems - Sesi 01 - Slides.pdf';
+const PPTX_NAME = 'Business Intelligence Systems - Sesi 01 - Slides.pptx';
+
+// A stand-in Slidev workspace: a `slidev` script that honours --output the way the real
+// one does, so build's wiring is tested without a 1-minute install or a browser.
+function fakeWorkspace({ failPptx = false } = {}) {
+  const ws = mkdtempSync(join(tmpdir(), 'rps-deck-ws-'));
+  mkdirSync(join(ws, 'node_modules', '.bin'), { recursive: true });
+  const bin = join(ws, 'node_modules', '.bin', 'slidev');
+  writeFileSync(bin, `#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in --output) out="$2"; shift;; --format) fmt="$2"; shift;; esac; shift; done
+if [ "$fmt" = "pptx-editable" ] && [ "${failPptx ? '1' : ''}" = "1" ]; then echo "pptx boom" >&2; exit 3; fi
+echo fake > "$out"
+`);
+  chmodSync(bin, 0o755);
+  return ws;
+}
+const WS = fakeWorkspace();
+const env = { RPS_DECK_SLIDEV_DIR: WS };
 
 // `build` is a single unconditional gate: no open FLAG and a fresh approval, or nothing
 // is written. There is no lesser "preview an unapproved draft" mode any more.
 
 test('build refuses while a FLAG is open, approved or not', () => {
-  const { status, out } = run(['build', 'flagged.md'], dir);
+  const { status, out } = run(['build', 'flagged.md'], dir, env);
   assert.equal(status, 1, out);
   assert.match(out, /FLAG/);
   assert.ok(!existsSync(join(dir, SLIDES_NAME)), 'nothing written while a FLAG is open');
 });
 
 test('build refuses an unapproved naskah', () => {
-  const { status, out } = run(['build', 'ok.md'], dir);
+  const { status, out } = run(['build', 'ok.md'], dir, env);
   assert.equal(status, 1, out);
   assert.match(out, /not approved/i);
 });
 
 test('build refuses a stale approval', () => {
   writeFileSync(join(dir, 'appr.md'), approve(MINIMAL, '2026-09-04'));
-  assert.equal(run(['build', 'appr.md'], dir).status, 0, 'approved build works');
+  assert.equal(run(['build', 'appr.md'], dir, env).status, 0, 'approved build works');
   // one character of note text changes, and the approval no longer describes the file
   writeFileSync(join(dir, 'appr.md'), approve(MINIMAL, '2026-09-04').replace('20:00.', '20:05.'));
-  const { status, out } = run(['build', 'appr.md'], dir);
+  const { status, out } = run(['build', 'appr.md'], dir, env);
   assert.equal(status, 1, out);
   assert.match(out, /changed since approval|stale/i);
 });
 
 test('a stray --final is a harmless no-op, not an error', () => {
   writeFileSync(join(dir, 'appr2.md'), approve(MINIMAL, '2026-09-04'));
-  const { status, out } = run(['build', '--final', 'appr2.md'], dir);
+  const { status, out } = run(['build', '--final', 'appr2.md'], dir, env);
   assert.equal(status, 0, out);
 });
 
@@ -426,17 +445,127 @@ test('build emits one file, named from course + session — no separate materi h
   // course name is added so the file self-identifies once copied out of that folder. The
   // student deliverable stays Materi.md (via `render`) — build never touches it.
   writeFileSync(join(dir, 'named.md'), approve(MINIMAL.replace('course: Business Intelligence Systems', 'course: Web Application Development'), '2026-09-04'));
-  const { status, out } = run(['build', 'named.md'], dir);
+  const { status, out } = run(['build', 'named.md'], dir, env);
   assert.equal(status, 0, out);
-  assert.ok(existsSync(join(dir, 'Web Application Development - Sesi 01 - Slides.html')), 'named from course + session');
-  assert.ok(!existsSync(join(dir, 'Web Application Development - Sesi 01 - Materi Mahasiswa.html')), 'no separate materi html');
+  assert.ok(existsSync(join(dir, 'Web Application Development - Sesi 01 - Slides.md')), 'named from course + session');
+  assert.ok(existsSync(join(dir, 'Web Application Development - Sesi 01 - Slides.pdf')), 'pdf export lands beside it');
+  assert.ok(!existsSync(join(dir, 'Web Application Development - Sesi 01 - Slides.html')), 'the html renderer is no longer called');
 });
 
 test('the built deck carries speaker notes — it is the instructor file, kept local', () => {
   writeFileSync(join(dir, 'appr3.md'), approve(MINIMAL, '2026-09-04'));
-  run(['build', 'appr3.md'], dir);
-  const html = readFileSync(join(dir, SLIDES_NAME), 'utf8');
-  assert.ok(html.includes('Katakan sesi selesai'), 'note text present — this file is the naskah, not a public materi');
+  run(['build', 'appr3.md'], dir, env);
+  const md = readFileSync(join(dir, SLIDES_NAME), 'utf8');
+  assert.ok(md.includes('Katakan sesi selesai'), 'note text present — this file is the instructor deck, kept local');
+});
+
+test('build writes the PDF and the PPTX through the workspace', () => {
+  writeFileSync(join(dir, 'ex.md'), approve(MINIMAL, '2026-09-04'));
+  const { status, out } = run(['build', 'ex.md'], dir, env);
+  assert.equal(status, 0, out);
+  assert.ok(existsSync(join(dir, PDF_NAME)));
+  assert.ok(existsSync(join(dir, PPTX_NAME)));
+});
+
+test('a failed PPTX export warns but the build still succeeds', () => {
+  writeFileSync(join(dir, 'ex2.md'), approve(MINIMAL, '2026-09-04'));
+  const { status, out } = run(['build', 'ex2.md'], dir, { RPS_DECK_SLIDEV_DIR: fakeWorkspace({ failPptx: true }) });
+  assert.equal(status, 0, out);
+  assert.match(out, /Slides\.pptx.*(skipped|failed)/i);
+  assert.ok(existsSync(join(dir, PDF_NAME)));
+});
+
+test('a missing workspace fails loudly and names the install command', () => {
+  writeFileSync(join(dir, 'ex3.md'), approve(MINIMAL, '2026-09-04'));
+  const { status, out } = run(['build', 'ex3.md'], dir, { RPS_DECK_SLIDEV_DIR: join(tmpdir(), 'no-such-slidev-ws') });
+  assert.notEqual(status, 0, out);
+  assert.match(out, /npm install/);
+});
+
+// ── seam 1: renderSlidev ─────────────────────────────────────────────────────
+
+const SLIDEV_SRC = `---
+course: Business Intelligence Systems
+session: 1
+topic: Pengantar BI
+slot-start: "18:15"
+slot-minutes: 105
+---
+
+### SLIDE 1 · Judul
+**UNIT** — U1 · Pembuka
+**VISUAL** — tanpa gambar.
+**KONTEN**
+# Judul sendiri
+- satu
+- dua
+**NOTES** \`[min 000 · 18:15]\` Sambut kelas.
+
+### SLIDE 2 · Lab
+**VISUAL** — tabel.
+**KONTEN**
+| a | b |
+| :---- | :---- |
+| 1 | 2 |
+**HOLD**
+**NOTES** \`[min 005 · 18:20]\` Tahan layar.
+
+### SLIDE 3 · Penutup
+**UNIT** — U2 · Penutup
+**VISUAL** — x.
+**KONTEN**
+Terima kasih
+**NOTES** \`[min 010 · 18:25]\` Selesai.
+`;
+const slidev = () => renderSlidev(parseSpec(SLIDEV_SRC));
+
+test('slidev: KONTEN passes through byte for byte', () => {
+  const md = slidev();
+  const spec = parseSpec(SLIDEV_SRC);
+  for (const slide of spec.slides) assert.ok(md.includes(slide.konten), `slide ${slide.n} konten intact`);
+});
+
+test('slidev: NOTES appear only in the trailing presenter comment, with the stamp', () => {
+  const md = slidev();
+  assert.ok(md.includes('<!--\n[min 000 · 18:15] Sambut kelas.\n-->'));
+  assert.equal(md.split('Sambut kelas.').length - 1, 1, 'notes once, nowhere else');
+  assert.ok(!md.includes('tanpa gambar'), 'VISUAL is not rendered');
+});
+
+test('slidev: HOLD becomes class: hold, and only on the HOLD slide', () => {
+  const md = slidev();
+  assert.equal(md.split('class: hold').length - 1, 1);
+  assert.match(md, /class: hold\n---\n[\s\S]*## Lab/);
+});
+
+test('slidev: each UNIT start emits one section divider', () => {
+  const md = slidev();
+  assert.equal(md.split('layout: section').length - 1, 2);
+  assert.match(md, /layout: section\n---\n\n# U1 · Pembuka/);
+});
+
+test('slidev: slide count = naskah slides + UNIT dividers', () => {
+  // 3 naskah slides + 2 dividers = 5 slides: 4 separators after the first, 2 of those
+  // (U2 divider, HOLD) carry frontmatter and so add a closing ---; headmatter is 2 lines.
+  const separators = slidev().split('\n').filter((l) => l === '---').length;
+  assert.equal(separators, 2 + 4 + 2);
+});
+
+test('slidev: a title is added unless KONTEN opens with its own heading', () => {
+  const md = slidev();
+  assert.match(md, /## Lab\n\n\| a \| b \|/);
+  assert.ok(!md.includes('## Judul\n'), 'KONTEN already opens with a heading');
+});
+
+test('slidev: output is deterministic', () => {
+  assert.equal(slidev(), slidev());
+  assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(slidev()), 'no timestamps');
+});
+
+test('slidev: headmatter names the theme and the course title', () => {
+  const md = slidev();
+  assert.match(md, /^---\ntheme: .*theme-cakrawala\n/);
+  assert.match(md, /title: Business Intelligence Systems · Pengantar BI\n/);
 });
 
 // ── status ───────────────────────────────────────────────────────
