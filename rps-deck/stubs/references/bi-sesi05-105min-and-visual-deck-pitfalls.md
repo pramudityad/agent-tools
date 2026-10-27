@@ -52,5 +52,5 @@ ttclid → avclid, gclid → spclid, SGTM → TagServer, GTM → TagHub, `gitops
 
 `tools/build_sesi05_slides.py` generates `Sesi 05 - Slides.html` from the §8 manifest with Sesi 04's
 CSS/JS copied verbatim (so the deck family does not fork). After editing slide text: re-run that
-script, re-run `probe-visual-deck.py`, then re-print. The naskah edit is not finished until the
+script, then re-print (historical: the probe script and HTML decks are retired, ADR 0009). The naskah edit is not finished until the
 `.html` and `.pdf` are regenerated.

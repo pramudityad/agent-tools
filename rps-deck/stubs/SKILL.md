@@ -34,16 +34,10 @@ Three different files get called "the deck". Only one is what "slides" or "pdf" 
 `Sesi NN - Naskah.md` (source, hand-authored), `Sesi NN - Materi.md` (student handout, from
 `render`), and **`<course> - Sesi NN - Slides.md` + `.pdf` + `.pptx`** (the Slidev Deck, the only
 files `build` emits, ADR 0009). `build` refuses unless the naskah is approved with no open
-FLAG, so a Slides file existing means the naskah was released. Build/probe/print recipe and
-what stales the deck after a naskah edit: `references/visual-deck.md` (legacy, pre-ADR 0009).
-How `build` drives Slidev (workspace, install, theme resolution): `references/slidev.md`. Distinguishing
-what belongs in a student zip vs. an internal instructor file:
-`references/artifact-classification.md`.
-
-A fifth variant exists: a deck exported through the **ppt-master** SVG→PPTX pipeline
-(native PPTX with editable charts/tables + PDF preview). Its runner, export gate, native
-chart/table parity rules, and LibreOffice-render pitfalls:
-`references/ppt-master-pptx-deck.md`.
+FLAG, so a Slides file existing means the naskah was released. A naskah edit after `build`
+stales the Deck; re-run `build`. How `build` drives Slidev (workspace, install, theme
+resolution): `references/slidev.md`. Distinguishing what belongs in a student zip vs. an
+internal instructor file: `references/artifact-classification.md`.
 
 ## The six steps
 
@@ -158,8 +152,7 @@ exists to be mis-pasted.
 
 Approval is also the trigger to produce the actual projectable deck —
 `Sesi NN - Slides.md` + `.pdf` — if it doesn't exist yet or the naskah changed since it was
-last built. Build order, the probe step, and the print recipe:
-`references/visual-deck.md`.
+last built. How `build` exports it: `references/slidev.md`.
 
 ## Checking course state
 
@@ -190,8 +183,7 @@ Concrete, previously-hit pitfalls worth reading before repeating them, one topic
   `bi-sesi05-105min-and-visual-deck-pitfalls.md`, `sdlc-double-sesi-180min.md`,
   `sdlc-sesi04-genap-slot-and-claims-register.md`, `wad-sesi01-120min-pitfalls.md`,
   `wad-sesi02-missing-week.md`, `wad-sesi05-vue-and-visual-deck.md`.
-- Multi-course/multi-sesi fan-out: `parallel-3-course-sesi03.md`,
-  `sdlc-sesi03-04-parallel-visual-build.md`.
+- Multi-course/multi-sesi fan-out: `parallel-3-course-sesi03.md`.
 - Vault-wide renumbering history: `cakrawala-week-to-sesi-rename-2026-09-15.md`.
 - Kontrak Kuliah (the per-course syllabus-style contract document, not the RPS):
   `kontrak-kuliah-template.md`, `kontrak-kuliah-value-edit.md`.
@@ -199,7 +191,6 @@ Concrete, previously-hit pitfalls worth reading before repeating them, one topic
   `online-bichronous-90pct.md`, `tata-tertib-per-course.md`.
 - The berita acara §7 table `rise-ops` reads verbatim: `naskah-section7-and-rise-records.md`.
 - A star-schema lab producing a paste-ready DBML diagram: `star-schema-dbdiagram.md`.
-- Batch-printing several sessions' visual decks in one pass: `print-sesi-slides-batch.md`.
 
 ## Standing rules
 

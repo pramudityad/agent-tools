@@ -18,6 +18,5 @@ Content shape: cover → siapa saya → timeline perjalanan → what-I-build →
 - Contact block: institutional email as the primary channel, a stated reply SLA, and a
   flexible form of address.
 
-Full print recipe (Playwright, `pathToFileURL`, style family, screenshot-verify loop):
-`intro-deck-print-to-pdf.md`. The same print engine batches teaching decks too —
-`print-sesi-slides-batch.md`.
+The old Playwright print recipe was retired with the HTML decks (ADR 0009); export through
+the Slidev workspace instead (`slidev.md`).

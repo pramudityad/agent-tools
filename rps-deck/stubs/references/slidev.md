@@ -43,3 +43,8 @@ The export logs a harmless `Failed to patch FloatingVue` console error; ignore i
 ## Smoke test (2026-10-26)
 
 Fixture naskah with 3 slides, 2 UNITs, 1 HOLD, 1 Mermaid block: `pdfinfo` reported 5 pages (3 + 2 dividers); navy/teal palette, amber HOLD chip and section dividers all render; first-slide divider does not leak its layout into later slides.
+
+## Carried over from the retired SVG→PPTX pipeline
+
+- After every export, spot-check the PDF pages (`pdftoppm -r 50 -png deck.pdf pg`, then look at them): no checker sees chart or table collisions that only show in the rendered page.
+- `pptx-editable` keeps text and tables native; Mermaid, SVG and gradients become pictures in the PPTX (ADR 0009).

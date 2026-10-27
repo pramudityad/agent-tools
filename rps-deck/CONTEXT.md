@@ -53,7 +53,7 @@ _Avoid_: sign-off, review status (review is the act; approval is the record).
 `<course> - Sesi NN - Slides.md` — the Slidev source `build` derives from an approved naskah —
 plus its exports `Slides.pdf` (what goes to RISE) and `Slides.pptx`. Never hand-edited;
 regenerate from the naskah instead (ADR 0009).
-_Avoid_: visual deck, ppt-master deck, Deck Pengampu, slides (alone, ambiguous with the
+_Avoid_: visual deck, hand-built deck, Deck Pengampu, slides (alone, ambiguous with the
 naskah's `### SLIDE` blocks).
 
 **Marker** (retired, ADR 0009; no code reads them any more):
