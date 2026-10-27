@@ -117,6 +117,8 @@ For the naskah under review, check:
   I do / We do before each lab, a hinge question with a decision rule, CFU cadence and an
   exit ticket, one idea per slide. Fix by reshaping existing DUR minutes, never by adding
   slides past the mandate.
+- **Voice** — written in the character and register of `SOUL.md` (this skill's folder): **Anda**,
+  never *kamu*/*kalian*; no invented numbers; no lines crossed. A *kamu* is AMBER.
 - **AI-prose tells** — the naskah should have had the `humanizer` pass
   (`~/.claude/skills/rps-deck/references/humanize-naskah.md`). Skim NOTES/LEAD for not-X-but-Y, one-line
   closers, forced triads and dash-everywhere; report as AMBER, never RED.

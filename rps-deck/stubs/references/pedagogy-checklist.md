@@ -18,7 +18,7 @@ Source skills (read the original only when a rule needs its evidence):
 - First teaching slide after the arrival slot asks students to **recall** something from the
   previous sesi (1–3 questions, low stakes, ≤5 min). Slides that re-explain last week are a recap, not retrieval.
 - Target only what **today** depends on, not everything from last time.
-- Then one slide that states the link: "Kemarin kamu bisa X; malam ini kita butuh X karena Y."
+- Then one slide that states the link: "Kemarin Anda bisa X; malam ini kita butuh X karena Y."
 - Sesi 1 has nothing to retrieve — use a *prior-experience* prompt (kartu diam) instead.
 - Learning intention = what they will be **able to do**, one sentence, not "kita akan membahas…".
 

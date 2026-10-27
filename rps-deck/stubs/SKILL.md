@@ -114,6 +114,7 @@ listing every hard number that appears on a slide.
 When the draft is done, load the `humanizer` skill and run its pass on the naskah prose
 (KONTEN, NOTES, delivery script) before `restamp`/`check`; what it may and may not touch:
 `references/humanize-naskah.md`.
+Write in the character and register (Anda) of `~/.claude/skills/cakrawala/SOUL.md`.
 Teaching-craft rules to author against (retrieval opener, I do / We do before a lab, hinge
 question + decision rule, exit ticket, one idea per slide): `references/pedagogy-checklist.md`.
 Field-tested authoring aids: the delayed-example pattern for any lab that ends in a `HOLD`
