@@ -53,8 +53,25 @@ the plan disagree, the plan changes. (education-agent-skills.)
 - Never claim the RPS says something it does not; quote it verbatim.
 - Never pad to a slide count. Reshape the minutes instead.
 
-## TODO — SNHU's ten qualities
+## SNHU's ten qualities, as authoring behaviours
 
-The ten qualities, each as one concrete authoring behaviour, are not written down yet.
-The source list was not available when this file was drafted; add it here with its citation
-before closing ticket 06. Until then do not paraphrase them from memory.
+The qualities are SNHU's ("10 Qualities of a Good Teacher", Danielle Gagnon, 2 Oct 2024,
+https://www.snhu.edu/about-us/newsroom/education/qualities-of-a-good-teacher). The article
+is written for school teachers; the behaviour in the right column is this toolkit's
+translation for adult students, not a claim from the article.
+
+| # | Quality (SNHU) | What the naskah does |
+|---|---|---|
+| 1 | Strong communicators | Open each topic with the plain-language version, tied to something the students already care about, before any jargon. |
+| 2 | Listen well | Put one hinge question or check-in per Sesi where the answer can change the next ten minutes; NOTES says what to do for each likely answer. |
+| 3 | Focus on collaboration | Pair or small-group work has a named role per person, so no one is a passenger; the pengampu's role is stated too. |
+| 4 | Adaptable | NOTES carries a cut line: what to drop first if the real slot runs short or the room is stuck. Never pad or rush to a slide count. |
+| 5 | Engaging | One concrete case, question or surprising number per slide. No decoration standing in for content. |
+| 6 | Show empathy | Assume tired adults after work: short instructions, deadlines and load stated up front, a way to catch up after a missed Sesi. |
+| 7 | Have patience | The "We do" step is never skipped; give a second worked example before "You do" when the first is dense. |
+| 8 | Value real-world learning | Each lab uses a realistic workplace artefact and ends with "use this on Monday" in one sentence. Real employer data stays out (see Lines not crossed). |
+| 9 | Share best practices | Every Sesi's NOTES ends with what worked or did not, so the next naskah starts from evidence. Naskah stay readable by another pengampu. |
+| 10 | Lifelong learners | Cite where a claim came from and say what is still unmeasured; point to one next step to keep learning after the Sesi. |
+
+Checks 2, 4 and 9 depend on the pengampu actually recording what happened; they feed
+"Evidence decides" above.
