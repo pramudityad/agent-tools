@@ -1,6 +1,6 @@
 # 0001 — RISE is not the academic record
 
-**Status:** accepted · 2026-09-12
+**Status:** accepted · 2026-09-12 · amended 2026-10-18 (see ADR 0007)
 
 ## Context
 
@@ -27,6 +27,14 @@ cannot read that Sheet.
 Grading support is a local gradebook built from a CSV the lecturer exports by hand.
 
 Nilai akhir stays a manual step in SIAKAD.
+
+## Amendment (2026-10-18, ADR 0007)
+
+**Task-level scores are allowed.** `tugas grade` writes `PUT /v1/task-log/{id}/score`, and
+that RISE-native task score is the score of record for each Tugas, the UTS and the UAS
+(163 successful posts, 12–17 Oct). What is *still* out of scope is unchanged: **nilai
+akhir**. `recap` only proposes a weighted final from RISE data; the SEVIMA entry is typed by
+hand, and no tool here touches SIAKAD.
 
 ## Consequences
 

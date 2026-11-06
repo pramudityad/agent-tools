@@ -65,16 +65,6 @@ the course/topic closest to your task before re-deriving any of this from scratc
   topic × team data slices, and the Sesi 01–07 → POC mapping.
 - `references/cakrawala-bi-uts-design-checkpoint-2026-09-19.md` — the design-only ruling: DoD
   changes, design items, the signature-block timing, seed inventory, defects.
-- `references/cakrawala-bi-uts-prd-2026-09-26.md` — BI's second prodi-paste run: rubric-split
-  ruling, intentional-overflow timeline, AI-rule scoping.
-- `references/cakrawala-bi-regroup-2026-09-26.md` — regrouping teams by last-4-sesi attendance,
-  plus the same-day take-home pivot (group tugas via `create-with-groups`).
-- `references/cakrawala-sdlc-uts-prd-2026-09-25.md` — SDLC's PRD UTS end to end: prodi paste →
-  verbatim naskah, ACC-day sweep, presentation-slot arithmetic, anti-duplicate topic rule.
-- `references/cakrawala-wad-uts-prd-2026-09-26.md` — WAD's group-build+defense UTS: mid-draft
-  paste recovery, sheet-beats-draft numbering, live-state vs document-claim gaps.
-- `references/cakrawala-uts-status-2026-09-22.md` — three-course UTS readiness check and the
-  precondition-checking framework it used.
 - `references/indonesian-public-dataset-sourcing.md` — which Indonesian public-data sources
   actually answer to a script, and the freeze-as-committed-CSV pattern.
 - `references/session-tugas-patterns.md` — how to author a per-sesi Tugas students can actually

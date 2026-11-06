@@ -37,6 +37,26 @@ The generated attendance table at `~/.config/cakrawala/registers/<CLASS>-kehadir
 Outside the vault on purpose: the vault auto-commits to a remote.
 _Avoid_: gradebook (this holds attendance, not nilai).
 
+**Ledger**:
+The draft score file at `~/.config/cakrawala/grades/<CLASS>-<assessment>.csv` (columns
+`nim,nama,user_data_id,score,feedback,posted`, free-form rubric columns between them). A
+working draft only — RISE is the score of record, so once a row is posted the ledger row is
+history.
+_Avoid_: gradebook, nilai — the ledger is a draft, never the record.
+
+**Posted**:
+A ledger row's `posted` column set to yes once its score went through `tugas grade`. The
+grading loop skips posted rows, which is what makes an interrupted batch resumable.
+_Avoid_: done (ambiguous between drafted, approved and posted).
+
+**Recap**:
+The read-only final table from `rise-ops recap <class>`, built live from RISE task scores
+and attendance — never from the ledger, so nothing can drift. Written to
+`~/.config/cakrawala/grades/<CLASS>-recap.csv`; the lecturer types it into SEVIMA by hand.
+The recap computes a weighted proposal, but nilai akhir itself is still out of scope (ADR
+0001, 0007).
+_Avoid_: nilai akhir (the recap proposes; SEVIMA records).
+
 ## Auth
 
 One cookie, `cakrawala_session_siakad`, in `~/.config/cakrawala/session` (mode 600). The

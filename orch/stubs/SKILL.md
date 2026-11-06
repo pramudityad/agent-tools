@@ -9,7 +9,7 @@ description: >-
   capabilities directly — orch dispatches to a tool that already exists (`rise-ops`,
   `rps-deck`, `graphify`, `hermes`, `orca`, `command-code`, `pi`) rather than doing the work
   itself; the worktree/implement/tier-1-review lane (ADR 0005) runs through the
-  `ticket-implement` and `ticket-promote` recipes, but the tier-2 Standards+Spec gate itself
+  `ticket-implement` recipe, but the tier-2 Standards+Spec gate itself
   still runs outside `orch run`.
 ---
 
@@ -37,7 +37,7 @@ orch status [--insights]        # what is in flight, what is scheduled, and what
 ## Running a recipe
 
 ```sh
-orch run sesi-run BI 3
+orch run deck-build <args>
 ```
 
 Steps run in the order the recipe declares. There is no dependency graph inside orch —
@@ -132,8 +132,8 @@ section says so and the rest still prints, exit `0`. Read-only in every mode.
 
 The tier-2 Standards+Spec gate is not a recipe step — it is the driving Claude session running
 a code review directly (per ADR 0005), after `ticket-implement` has already isolated a
-worktree, implemented the ticket, and run pi's tier-1 review, and before `ticket-promote` opens
-the MR. If a user asks orch to run that gate itself, say so plainly rather than approximating
+worktree, implemented the ticket, and run pi's tier-1 review, and before the MR
+is opened. If a user asks orch to run that gate itself, say so plainly rather than approximating
 it with a recipe step.
 
 ## User preferences

@@ -4,19 +4,27 @@
       "id": "claude-planner",
       "harness": "claude",
       "model": "claude-sonnet-5",
-      "capabilities": ["read", "edit", "bash"]
+      "capabilities": [
+        "read",
+        "edit",
+        "bash"
+      ]
     },
-    { "id": "rise-ops", "harness": "cli" },
-    { "id": "rps-deck", "harness": "cli" },
-    { "id": "graphify", "harness": "cli" },
-    { "id": "hermes", "harness": "cli" },
     {
-      "id": "cc-implementer",
-      "harness": "command-code",
-      "model": "meta/muse-spark-1.3-contributor",
-      "capabilities": []
+      "id": "rise-ops",
+      "harness": "cli"
     },
-    { "id": "pi-reviewer", "harness": "pi" },
-    { "id": "orca-worktree", "harness": "cli" }
+    {
+      "id": "rps-deck",
+      "harness": "cli"
+    },
+    {
+      "id": "graphify",
+      "harness": "cli"
+    },
+    {
+      "id": "hermes",
+      "harness": "cli"
+    }
   ]
 }

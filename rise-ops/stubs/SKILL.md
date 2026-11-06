@@ -193,9 +193,46 @@ to parse it yourself. A `.zip` is auto-extracted one level into a `contents/` su
 - If `list_files` comes back empty, the student likely submitted a Google Docs link instead
   of a file (the task description allows either) — check the downloaded `_review.json` for
   it; the exact field isn't nailed down yet, so don't assume it's missing without looking.
-- The `grade` write payload (`PUT /v1/task/{id}/user/{userDataId}/review`) is inferred from
-  the GET response's own field names, not from documentation — if it 400s, that's the real
-  contract disagreeing with the guess, not a bug to route around.
+- The grade write is `PUT /v1/task-log/{task_log_id}/score` (read from the RISE frontend
+  bundle, 163 successful posts). `task_log_id` comes from the GET review response — a student
+  who has not submitted has none, and `grade` refuses rather than guessing.
+
+## Grading flow (Tugas → UTS/UAS → recap)
+
+The full loop, fetch → draft → approve → post → recap (ADR 0007). RISE is the score of
+record; the ledger is only a working draft; the lecturer approves before anything posts;
+nilai akhir stays a manual step in SEVIMA SIAKAD.
+
+1. **Fetch.** `tugas list <class>` to see the tasks, then `tugas review <class> <task-id>
+   --all` per task (who submitted, who is graded), then `tugas review <class> <task-id>
+   <user-data-id>` per submission to download it.
+2. **Draft the ledger** at `~/.config/cakrawala/grades/<CLASS>-<assessment>.csv`. Required
+   columns `nim,nama,user_data_id,score,feedback,posted`; rubric-criteria or group/factor
+   columns sit between them, free-form. Draft per-criterion scores and feedback **in
+   Indonesian** against the rubric or the `Kunci Tugas` answer key. Mark uncertain cases
+   `?` and suspected AI-generated or copied work `flag:` — never silently decide either.
+   For group work (UTS/UAS, the BI factor formula), work the group score into individual
+   scores in the ledger using that course's RPS rule.
+3. **Lecturer approval.** Show the draft and wait. Nothing posts without it. "Artefak tidak
+   bisa dijelaskan = 0" is the lecturer's call after the defense — never yours.
+4. **Post.** Loop `tugas grade` over the approved rows, skipping rows already `posted`
+   (that is what makes an interrupted batch resumable). Each write lands in
+   `~/.config/cakrawala/audit.jsonl` with its prior value.
+5. **Recap**, when a class's tasks are all graded:
+
+   ```sh
+   rise-ops recap BI
+   ```
+
+   Read-only and built live from RISE (task scores + attendance) — never from the ledger, so
+   nothing can drift. It prints the task→category mapping first (sesi 8 → UTS, sesi 16 →
+   UAS, title contains "kelompok" → Tugas Kelompok, else Tugas Individu) — **check that
+   mapping before trusting the numbers**. Tugas averages count a missing submission as 0.
+   Weights are the constant 25/25/20/20/10 (UTS / UAS / tugas individu / tugas kelompok /
+   kehadiran). Writes `~/.config/cakrawala/grades/<CLASS>-recap.csv`.
+
+   The `catatan` column **flags** RPS rules, never applies them: kehadiran < 75% (blokir
+   UAS), susulan maks 80, remediasi maks 60, UAS < 50. The lecturer decides what to do.
 
 ## Kelompok (class-group)
 

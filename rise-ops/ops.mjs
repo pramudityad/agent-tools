@@ -4,8 +4,9 @@
 //
 // RISE is the LMS. It is NOT the academic record: nilai akhir lives in SEVIMA SIAKAD
 // (siakad.cakrawala.ac.id → sso.sevima.com), a separate system with separate auth, and
-// RISE exposes no final-grade surface at all (ADR 0001). Everything here is attendance,
-// berita acara, and a local gradebook — never a final grade.
+// RISE exposes no final-grade surface at all (ADR 0001). Task-level scores ARE written
+// here (ADR 0006); `recap` only proposes a weighted final (ADR 0007) and SEVIMA is typed
+// by hand — nilai akhir itself stays out of scope.
 //
 // Two rules this tool will not bend:
 //   · No roll, no write. Unmarked attendance is never guessed (ADR 0003).
@@ -33,6 +34,8 @@ const SESSION_FILE = join(CONFIG_DIR, 'session');
 const CACHE_FILE = join(CONFIG_DIR, 'cache.json');
 const AUDIT_FILE = join(CONFIG_DIR, 'audit.jsonl');
 const REGISTER_DIR = join(CONFIG_DIR, 'registers');
+/** Draft ledgers and recaps (ADR 0007) — outside the vault, same reason REGISTER_DIR is. */
+const GRADE_DIR = join(CONFIG_DIR, 'grades');
 /** Never the vault (ADR 0006) — submissions are private and the vault auto-commits. */
 const SUBMISSION_DIR = join(CONFIG_DIR, 'submissions');
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -316,7 +319,20 @@ export function buildAcara(naskahText) {
   const artifact = fm.artifact ? ` Artefak: ${fm.artifact}.` : '';
 
   const plans = `${head} ${beats}${artifact}`.replace(/\s+/g, ' ').trim();
-  const realizations = `Terlaksana sesuai rencana. ${plans}`.replace(/\s+/g, ' ').trim();
+
+  // Realisasi is still the plan restated as delivered (ADR 0002), but rendered as a
+  // record, not a verbatim echo of rencana: a headline line, the beat list in flowing
+  // form, and the artefak in past tense.
+  const phases = segments
+    .map((s) => `${s.bentuk} (menit ${s.menit})`)
+    .join('; ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const realHead = `${fm.topic ?? fm.title ?? 'Sesi'}${fm.cpmk ? ` (${fm.cpmk})` : ''} terlaksana penuh ${slot} menit${window} sesuai rencana.`;
+  const realArtifact = fm.artifact
+    ? ` Artefak sesi dikerjakan di dalam slot sesuai rencana: ${String(fm.artifact).replace(/\s+/g, ' ').trim()}.`
+    : '';
+  const realizations = `${realHead} Rangkaian: ${phases}.${realArtifact}`.replace(/\s+/g, ' ').trim();
   return { plans, realizations, segments: segments.length };
 }
 
@@ -643,6 +659,28 @@ export function attendancePercent(perSession, userDataId) {
   const marks = perSession.map((p) => p.byId[userDataId] ?? '');
   const counted = marks.filter((m) => COUNTED.includes(m)).length;
   return { counted, total: perSession.length, percent: (counted / perSession.length) * 100 };
+}
+
+/**
+ * The weighted final-grade proposal behind `recap` (ADR 0007).
+ *
+ * Weights are the constant 25/25/20/20/10 — UTS / UAS / tugas individu / tugas kelompok /
+ * kehadiran — shared by all three RPS. Every input is already a 0–100 number: tugas columns
+ * are per-category averages with a missing submission counted as 0, kehadiran is the
+ * attendancePercent figure. RPS caps (kehadiran < 75% blocks UAS, remediation maks 60, UAS
+ * < 50, susulan maks 80) are FLAGGED in `catatan` and never applied here — deciding them is
+ * the lecturer's, after the defense.
+ */
+export const GRADE_WEIGHTS = { uts: 0.25, uas: 0.25, tugasIndividu: 0.2, tugasKelompok: 0.2, kehadiran: 0.1 };
+
+export function finalGrade({ tugasIndividu = 0, tugasKelompok = 0, uts = 0, uas = 0, kehadiran = 0 }) {
+  const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+  const [ti, tk, u1, u2, kh] = [tugasIndividu, tugasKelompok, uts, uas, kehadiran].map(num);
+  const final = ti * GRADE_WEIGHTS.tugasIndividu + tk * GRADE_WEIGHTS.tugasKelompok + u1 * GRADE_WEIGHTS.uts + u2 * GRADE_WEIGHTS.uas + kh * GRADE_WEIGHTS.kehadiran;
+  const catatan = [];
+  if (kh < AT_RISK_PCT) catatan.push(`kehadiran ${kh.toFixed(0)}% < ${AT_RISK_PCT}% (blokir UAS per RPS)`);
+  if (u2 < 50) catatan.push(`UAS ${u2.toFixed(0)} < 50 (remediasi maks 60 per RPS)`);
+  return { final, catatan };
 }
 
 /**
@@ -1019,6 +1057,103 @@ const flagValue = (flags, name) => {
   return i >= 0 ? flags[i + 1] : undefined;
 };
 
+// ── recap (ADR 0007) ──────────────────────────────────────────────────────────
+
+/**
+ * Which recap column a RISE task feeds. By sesi and title, in that order: sesi 8 is the
+ * UTS, sesi 16 the UAS, a "kelompok" title marks group tugas, everything else is an
+ * individual tugas. The mapping is printed before any number so it can be checked — a
+ * mis-mapped task silently zeros a category otherwise.
+ */
+function recapCategory(sesi, title) {
+  if (sesi === 8) return 'uts';
+  if (sesi === 16) return 'uas';
+  if (/kelompok/i.test(String(title ?? ''))) return 'tugasKelompok';
+  return 'tugasIndividu';
+}
+
+/** Exported only so the self-check in test.mjs can pin the sesi-8/sesi-16 rule. */
+export { recapCategory };
+
+commands.recap = async (alias) => {
+  const cached = await cache();
+  const klass = resolveClass(cached, alias);
+  const index = await taskIndex(klass.id);
+
+  // The mapping table comes first, before any score: if a task lands in the wrong
+  // category here, every number below it is wrong in a way no total will reveal.
+  const tasks = [];
+  for (const s of klass.sessions) {
+    for (const t of index.get(s.id) ?? []) {
+      tasks.push({ sesi: s.n, taskId: t.task_id, title: t.title, category: recapCategory(s.n, t.title) });
+    }
+  }
+  if (!tasks.length) fail('not_found', `${klass.alias} has no tasks in RISE — nothing to recap`);
+
+  say(`${klass.alias} — task → category mapping (check this first):`);
+  const label = { tugasIndividu: 'Tugas Individu', tugasKelompok: 'Tugas Kelompok', uts: 'UTS', uas: 'UAS' };
+  for (const t of tasks) say(`  sesi ${String(t.sesi).padStart(2)}  ${t.title}  →  ${label[t.category]}`);
+  say('');
+
+  // Score per category per student. RISE is the source (ADR 0007) — the ledger is never
+  // read here, so a stale draft cannot leak into the final. A missing submission or an
+  // ungraded row counts 0, which is why the mapping and per-category columns print.
+  const scores = new Map(klass.roster.map((r) => [r.user_data_id, { tugasIndividu: [], tugasKelompok: [], uts: [], uas: [] }]));
+  for (const t of tasks) {
+    const subs = await api('GET', `/v1/task/${t.taskId}/submissions?page=1&page_size=200`);
+    const byId = new Map((subs.items ?? []).map((s) => [s.user_data_id, s]));
+    for (const r of klass.roster) {
+      const s = byId.get(r.user_data_id);
+      scores.get(r.user_data_id)[t.category].push(s?.is_graded ? Number(s.score) : 0);
+    }
+  }
+
+  const { perSession } = await attendanceHistory(klass);
+
+  const header = ['nim', 'nama', 'tugas_individu', 'tugas_kelompok', 'uts', 'uas', 'kehadiran', 'final', 'catatan'];
+  const rows = klass.roster.map((r) => {
+    const s = scores.get(r.user_data_id);
+    const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+    const { percent } = attendancePercent(perSession, r.user_data_id);
+    const g = finalGrade({
+      tugasIndividu: avg(s.tugasIndividu),
+      tugasKelompok: avg(s.tugasKelompok),
+      uts: avg(s.uts),
+      uas: avg(s.uas),
+      kehadiran: percent,
+    });
+    return {
+      nim: r.user_nim,
+      nama: r.user_name,
+      tugasIndividu: avg(s.tugasIndividu),
+      tugasKelompok: avg(s.tugasKelompok),
+      uts: avg(s.uts),
+      uas: avg(s.uas),
+      kehadiran: Math.round(percent),
+      final: Math.round(g.final * 10) / 10,
+      catatan: g.catatan.join('; '),
+    };
+  });
+
+  say(`  ${header.join('  ')}`);
+  for (const r of rows) {
+    say(`  ${r.nim}  ${r.nama}  ${r.tugasIndividu.toFixed(0)}  ${r.tugasKelompok.toFixed(0)}  ${r.uts.toFixed(0)}  ${r.uas.toFixed(0)}  ${r.kehadiran}%  ${r.final}  ${r.catatan}`);
+  }
+  say(`\nbobot: 25/25/20/20/10 (UTS / UAS / tugas individu / tugas kelompok / kehadiran). catatan flags RPS caps, it does not apply them.`);
+
+  mkdirSync(GRADE_DIR, { recursive: true });
+  const out = join(GRADE_DIR, `${klass.alias}-recap.csv`);
+  const csv = [
+    header.join(','),
+    ...rows.map((r) =>
+      [r.nim, r.nama, r.tugasIndividu, r.tugasKelompok, r.uts, r.uas, r.kehadiran, r.final, `"${r.catatan}"`].join(','),
+    ),
+    '',
+  ].join('\n');
+  writeFileSync(out, csv);
+  say(`wrote ${out} — SEVIMA is typed by hand from this; nilai akhir stays out of scope (ADR 0001).`);
+};
+
 /** RISE rejects a start_date before today, so "today" is the only safe default. */
 const wibToday = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
@@ -1129,9 +1264,12 @@ commands.tugas = async (sub, alias, ...rest) => {
       fail('bad_input', `${before.user_name} is already graded (score ${before.score}) — pass --force to overwrite`);
     }
 
+    if (!before.task_log_id) fail('bad_input', `${before.user_name} has not submitted — no task_log_id to grade`);
+    // Real contract (read from the RISE frontend bundle): PUT /v1/task-log/{task_log_id}/score
     const payload = { score, lecturer_feedback: feedback };
-    const data = await api('PUT', path, payload);
-    audit({ cmd: 'tugas-grade', method: 'PUT', path, payload, prior: { score: before.score, graded_at: before.graded_at }, result: data });
+    const writePath = `/v1/task-log/${before.task_log_id}/score`;
+    const data = await api('PUT', writePath, payload);
+    audit({ cmd: 'tugas-grade', method: 'PUT', path: writePath, payload, prior: { score: before.score, graded_at: before.graded_at }, result: data });
     say(`${before.user_nim} ${before.user_name} · score ${score}${feedback ? ` · "${feedback}"` : ''}`);
     return;
   }
@@ -1350,6 +1488,8 @@ const USAGE = `rise-ops — run and record a Cakrawala sesi
   tugas review <class> <task-id> <user-data-id>       fetch + download one submission
   tugas grade <class> <task-id> <user-data-id>
     --score N [--feedback "…"] [--force]              write a grade; refuses to overwrite one without --force
+
+  recap <class>                        read-only final-grade proposal from RISE (ADR 0007)
 
 class is one of ${Object.keys(COURSES).join(', ')}; sesi is the sesi number.`;
 

@@ -22,6 +22,8 @@ import {
   descriptionHtml,
   sanitizeFilename,
   slugify,
+  finalGrade,
+  recapCategory,
 } from './ops.mjs';
 
 let passed = 0;
@@ -207,7 +209,10 @@ test('buildAcara renders both fields from an approved Naskah', () => {
   assert.match(plans, /CPMK-1, CPMK-5/);
   assert.match(plans, /Menit 0–7 Soft start dan catch-up\./);
   assert.match(plans, /Artefak: D1/);
-  assert.ok(realizations.startsWith('Terlaksana sesuai rencana.'));
+  assert.ok(realizations.includes(' terlaksana penuh 105 menit (18:15-20:00) sesuai rencana.'));
+  assert.ok(realizations.includes('Rangkaian: Soft start dan catch-up (menit 0–7)'));
+  assert.ok(realizations.includes('Artefak sesi dikerjakan di dalam slot sesuai rencana: D1'));
+  assert.ok(!realizations.startsWith('Terlaksana sesuai rencana.')); // a record, not a verbatim echo of rencana
 });
 
 test('buildAcara refuses a Naskah that is not approved', () => {
@@ -441,6 +446,46 @@ test('slugify makes a filesystem-safe folder name from a student name', () => {
   assert.equal(slugify('  Ahmad Rafa Fahrezi  '), 'ahmad-rafa-fahrezi');
   assert.equal(slugify(''), 'unknown');
   assert.equal(slugify(undefined), 'unknown');
+});
+
+// ── recap / finalGrade (ADR 0007) ─────────────────────────────────────────────
+// Weights are the constant 25/25/20/20/10 (UTS / UAS / tugas individu / tugas kelompok /
+// kehadiran), shared by all three RPS. Caps are flagged in `catatan`, never applied.
+
+test('finalGrade: a normal student with no flags', () => {
+  const g = finalGrade({ tugasIndividu: 80, tugasKelompok: 70, uts: 90, uas: 100, kehadiran: 100 });
+  // 80*.20 + 70*.20 + 90*.25 + 100*.25 + 100*.10 = 16+14+22.5+25+10 = 87.5
+  assert.equal(g.final, 87.5);
+  assert.deepEqual(g.catatan, []);
+});
+
+test('finalGrade: attendance under the 75% RPS gate is flagged, not applied', () => {
+  const g = finalGrade({ tugasIndividu: 80, tugasKelompok: 80, uts: 80, uas: 80, kehadiran: 60 });
+  // 80*.20 + 80*.20 + 80*.25 + 80*.25 + 60*.10 = 78
+  assert.equal(g.final, 78);
+  assert.equal(g.catatan.length, 1);
+  assert.match(g.catatan[0], /kehadiran.*75/i);
+});
+
+test('finalGrade: a missing UAS scores 0 for it and is flagged', () => {
+  const g = finalGrade({ tugasIndividu: 80, tugasKelompok: 80, uts: 80, uas: 0, kehadiran: 100 });
+  assert.equal(g.final, 62);
+  assert.ok(g.catatan.some((c) => /UAS/i.test(c)));
+});
+
+test('finalGrade: UAS under 50 is flagged alongside everything else', () => {
+  const g = finalGrade({ tugasIndividu: 60, tugasKelompok: 60, uts: 60, uas: 40, kehadiran: 50 });
+  assert.equal(g.final, 54);
+  assert.equal(g.catatan.length, 2); // kehadiran < 75 and UAS < 50
+  assert.ok(g.catatan.some((c) => /UAS.*50/i.test(c)));
+});
+
+test('recapCategory: sesi wins over title, then kelompok, then individual', () => {
+  assert.equal(recapCategory(8, 'Tugas Kelompok apa pun'), 'uts');
+  assert.equal(recapCategory(16, 'apa pun'), 'uas');
+  assert.equal(recapCategory(3, 'Sesi 3 - Tugas Kelompok'), 'tugasKelompok');
+  assert.equal(recapCategory(3, 'Sesi 3 - Tugas Individu'), 'tugasIndividu');
+  assert.equal(recapCategory(12, ''), 'tugasIndividu');
 });
 
 // ── summary ───────────────────────────────────────────────────────────────────
